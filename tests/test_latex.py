@@ -74,6 +74,20 @@ def test_latex_quotes_verify_on_visible_content_only_for_latex_evidence():
     assert not verify_quote(records, pdf.evidence_id, "CodeLlama 59→64^{(-6.35)}")
 
 
+@pytest.mark.parametrize("copies", [2, 4])
+def test_json_escaped_latex_commands_preserve_quote_checks(copies):
+    source = r"DeepSeek & \textbf{110}$\to$\textbf{122}$^{(+1.02)}$ \\"
+    ledger = EvidenceLedger("escaped-tex")
+    tex = ledger.add("paper", "arxiv", "LaTeX source", source, LATEX_METHOD)
+    pdf = ledger.add("paper", "arxiv", "page 1", source, "PDF text extraction")
+    records = {record.evidence_id: record for record in ledger.records()}
+    quote = source.replace("\\", "\\" * copies)
+    assert verify_quote(records, tex.evidence_id, quote)
+    assert not verify_quote(records, tex.evidence_id, quote.replace("122", "123"))
+    assert not verify_quote(records, tex.evidence_id, quote.replace("110", "999"))
+    assert not verify_quote(records, pdf.evidence_id, quote)
+
+
 def test_arxiv_ingestion_prefers_latex_and_falls_back_to_pdf(tmp_path, monkeypatch):
     monkeypatch.setattr(services, "ROOT", tmp_path)
     monkeypatch.setattr(storage, "ROOT", tmp_path)

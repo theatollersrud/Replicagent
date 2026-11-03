@@ -105,6 +105,9 @@ _FORMATTING = r"\\(?:textbf|textit|textsc|texttt|textrm|textsf|emph|underline|ma
 
 def latex_normalise(text: str) -> str:
     """Reduce LaTeX markup to its visible content so `64$^{(-6.35)}$` and `64^{(-6.35)}` compare equal."""
+    # Models sometimes copy JSON-escaped commands instead of decoded LaTeX.
+    # Normalize command escapes while retaining the source's numbers and words.
+    text = re.sub(r"\\{2,}(?=[A-Za-z])", r"\\", text)
     text = re.sub(r"(?<!\\)%[^\n]*", "", text)
     text = re.sub(r"\\(?:hphantom|vphantom|phantom|hspace\*?|vspace\*?|label|ref|cite[tp]?\*?|cmidrule|cline)\s*(\[[^\]]*\])?\s*\{[^{}]*\}", "", text)
     text = re.sub(r"\\multicolumn\s*\{[^{}]*\}\s*\{[^{}]*\}", "", text)
