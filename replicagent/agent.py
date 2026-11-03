@@ -266,7 +266,10 @@ class GenerateReport(BaseAgent):
         audit_id = ctx.session.state["audit_id"]
         set_stage(audit_id, "Checking evidence and calculating the score")
         report, markdown = await asyncio.to_thread(finalize, audit_id, ctx.session.state["review"], ctx.session.state.get("correctness"))
-        yield progress(self.name, markdown, {"report_id": audit_id, "static_score": report.static_score.model_dump(mode="json"), "dynamic_score": report.dynamic_score.model_dump(mode="json"), "report_path": str(ROOT / "audits" / audit_id / "report.md")})
+        summary = markdown.rsplit("\n## Summary", 1)[-1]
+        path = ROOT / "audits" / audit_id / "report.md"
+        message = f"# Reproducibility audit: {report.paper.title}\n\n## Summary{summary}\nThe full report with evidence, tables, and every problem is in `{path}`."
+        yield progress(self.name, message, {"report_id": audit_id, "static_score": report.static_score.model_dump(mode="json"), "dynamic_score": report.dynamic_score.model_dump(mode="json"), "report_path": str(ROOT / "audits" / audit_id / "report.md")})
 
 
 ingest = IngestPaper(name="IngestPaper", description="The paper is read and its source pages are recorded.")

@@ -13,7 +13,7 @@ MAX_CLAIM_CHECKS = 10
 MAX_CONSISTENCY_CHECKS = 4
 CLAIM_BUDGET_SECONDS = 150     # a claim that has consumed this much script time is abandoned
 
-SCRIPT_RULES = """Each script must be a self-contained Python 3 program that uses only the standard library, pandas, and numpy, reads files by paths RELATIVE TO THE PACKAGE ROOT exactly as listed in the inventory, performs no network access, writes no files, finishes within 60 seconds, and prints RESULT=<value> as its final line.
+SCRIPT_RULES = """Keep every script under 80 lines. Each script must be a self-contained Python 3 program that uses only the standard library, pandas, and numpy, reads files by paths RELATIVE TO THE PACKAGE ROOT exactly as listed in the inventory, performs no network access, writes no files, finishes within 60 seconds, and prints RESULT=<value> as its final line.
 Use the column names, sample rows, and column_values from the inventory. Match categorical values EXACTLY as listed in column_values; never match by a guessed substring.
 Reproduce the filters the authors' analysis code applies (model subsets, benchmark names, date cutoffs, deduplication, score column selection) by reading the ANALYSIS CODE, and state each filter in the description.
 Never fall back silently to a different model, subset, or file. If a filter selects nothing or a required file is missing, print RESULT=UNRESOLVED.
@@ -85,7 +85,10 @@ def iterative_checks(audit_id: str, repository: dict, dynamic: dict, manifest: d
     if dynamic.get("status") != "completed":
         return {"status": "not_attempted", "reason": dynamic.get("reason", "Dynamic analysis did not complete."), "results": [], "assessments": [], "rounds": 0, "log": log}
     known = {claim["claim_id"] for claim in manifest.get("claims", [])}
-    plan = generate(generation_prompt(manifest, dynamic_context, analysis_code), CheckPlan)
+    try:
+        plan = generate(generation_prompt(manifest, dynamic_context, analysis_code), CheckPlan)
+    except Exception as exc:
+        return {"status": "blocked", "reason": f"The check generation call failed: {type(exc).__name__}: {str(exc)[:300]}", "results": [], "assessments": [], "rounds": 0, "log": log}
     checks = [c.model_dump() for c in plan.checks if c.kind == "consistency" or c.claim_id in known]
     checks = [c for c in checks if c["kind"] == "claim"][:MAX_CLAIM_CHECKS] + [c for c in checks if c["kind"] == "consistency"][:MAX_CONSISTENCY_CHECKS]
     log.extend(plan.notes)
@@ -117,7 +120,20 @@ def iterative_checks(audit_id: str, repository: dict, dynamic: dict, manifest: d
             if failed or crashed:
                 log.append(f"{len(failed)} claim checks and {len(crashed)} consistency checks remained unresolved when the round limit or time budget was reached.")
             break
-        revision = generate(revision_prompt(failed, crashed, consistency, dynamic_context, relevant_code(analysis_code, failed + crashed + consistency)), RevisionPlan)
+        code = relevant_code(analysis_code, failed + crashed + consistency)
+        try:
+            revision = generate(revision_prompt(failed, crashed, consistency, dynamic_context, code), RevisionPlan)
+        except Exception as exc:
+            log.append(f"The revision call failed ({type(exc).__name__}: {str(exc)[:200]}). Round {rounds} results were kept and no further revisions were attempted.")
+            if consistency:
+                try:
+                    revision = generate(revision_prompt([], [], consistency, dynamic_context, code) + "\n\nReturn assessments only, with an empty revisions list.", RevisionPlan)
+                    revision = RevisionPlan(revisions=[], assessments=revision.assessments, notes=revision.notes)
+                except Exception as second:
+                    log.append(f"The assessment-only call also failed ({type(second).__name__}). Consistency outputs are recorded without a judgement.")
+                    break
+            else:
+                break
         log.extend(revision.notes)
         ran = {r["claim_id"] for r in consistency}
         assessments.extend(a.model_dump() for a in revision.assessments if a.check_id in ran)
@@ -182,12 +198,22 @@ Second pass: assume at least one definition differs from the paper and look for 
 
 
 def _merge_traces(passes: list[MetricMap]) -> list[dict]:
-    """Union the passes: a definition flagged by any pass keeps the flagging pass's answers."""
+    """Union the passes: a definition flagged by any pass keeps the flagging pass's answers. Entries quoting the same code line are one entry."""
     rank = {"no": 0, "partially": 1, "not_found": 2, "yes": 3}
     merged: dict[str, dict] = {}
+    quote_keys: dict[str, str] = {}
     for index, result in enumerate(passes):
         for metric in result.metrics:
-            key = " ".join(metric.name.casefold().replace("-", " ").replace("/", " ").split())[:40]
+            key = " ".join(metric.name.casefold().replace("-", " ").replace("/", " ").replace("_", " ").split())[:40]
+            quote = " ".join(metric.code_quote.split())[:80]
+            existing = merged.get(quote_keys.get(quote, ""))
+            if quote and key not in merged and existing and existing["consistent"] == metric.consistent != "yes":
+                # The same flagged code line under another name: one entry, both names.
+                key = quote_keys[quote]
+                if metric.name.casefold() not in existing["name"].casefold():
+                    existing["name"] += f"; {metric.name}"
+            elif quote:
+                quote_keys.setdefault(quote, key)
             item = metric.model_dump() | {"passes": [index + 1]}
             if key not in merged or rank[item["consistent"]] < rank[merged[key]["consistent"]]:
                 item["passes"] = sorted(set(merged.get(key, {}).get("passes", []) + [index + 1]))

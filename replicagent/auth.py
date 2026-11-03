@@ -59,12 +59,21 @@ def generate_structured(prompt: str, schema, temperature: float = 0.1):
         location=os.getenv("GOOGLE_CLOUD_LOCATION", "global"),
         credentials=local_credentials(),
     )
-    response = client.models.generate_content(
-        model=os.getenv("AUDITOR_MODEL", "gemini-3.5-flash"),
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            temperature=temperature, response_mime_type="application/json", response_schema=schema,
-            http_options=types.HttpOptions(retry_options=types.HttpRetryOptions(attempts=3, initial_delay=2, max_delay=10)),
-        ),
-    )
-    return schema.model_validate_json(response.text)
+    from pydantic import ValidationError
+    attempts = [prompt, prompt + "\n\nYour previous response was cut off before the JSON ended. Respond with at most a quarter of that length: keep every script under 60 lines, return only the fields the schema requires, and never repeat an unchanged script."]
+    for index, text in enumerate(attempts):
+        response = client.models.generate_content(
+            model=os.getenv("AUDITOR_MODEL", "gemini-3.5-flash"),
+            contents=text,
+            config=types.GenerateContentConfig(
+                temperature=temperature, response_mime_type="application/json", response_schema=schema,
+                http_options=types.HttpOptions(retry_options=types.HttpRetryOptions(attempts=3, initial_delay=2, max_delay=10)),
+            ),
+        )
+        try:
+            return schema.model_validate_json(response.text or "")
+        except ValidationError as error:
+            if index == len(attempts) - 1:
+                raise
+            last = error
+    raise last

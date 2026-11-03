@@ -34,7 +34,7 @@ def deterministic_problems(dynamic: dict, references: dict, checks: list[dict], 
     problems = []
     if dynamic.get("status") == "completed":
         for failure in dynamic["compile"]["failures"]:
-            problems.append(Problem(title=f"{failure['file']} does not parse", category="code_bug", severity="medium", basis="observation",
+            problems.append(Problem(title=f"{failure['file'].split('/')[-1]} does not parse", category="code_bug", severity="medium", basis="observation",
                                     rationale=f"The interpreter reported '{failure['message']}' at line {failure['line']}. The file cannot run until it is fixed.",
                                     evidence_id=dynamic["compile"]["evidence_id"], quote=failure["file"], location=f"{failure['file']}:{failure['line']}"))
         for run in dynamic.get("runs", []):
@@ -140,7 +140,7 @@ def finalize(audit_id: str, review_value, correctness_value=None) -> tuple[Audit
         traced.append(metric)
         if metric.get("consistent") in {"no", "partially"} and paper_ok and code_ok:
             # Metrics that share one root cause (the same discrepancy wording and code file) become one problem.
-            key = " ".join(metric.get("discrepancy", "").casefold().split())[:90] + "|" + metric.get("code_file", "")
+            key = (" ".join(metric.get("code_quote", "").split())[:60] or " ".join(metric.get("discrepancy", "").casefold().split())[:90]) + "|" + metric.get("code_file", "")
             grouped.setdefault(key, []).append(metric)
         elif metric.get("consistent") in {"no", "partially"}:
             rejected.append(f"Metric trace '{metric['name']}' had an unverifiable paper or code quote.")
@@ -211,9 +211,11 @@ def finalize(audit_id: str, review_value, correctness_value=None) -> tuple[Audit
     )
     report.limitations = list(dict.fromkeys(report.limitations))
     report.rejected_evidence_references = list(dict.fromkeys(report.rejected_evidence_references))
-    markdown = render_report(report, evidence)
+    summary = render_summary(report)
+    markdown = render_report(report, evidence) + "\n" + summary
     save(audit_id, "report.json", report.model_dump(mode="json"))
     save(audit_id, "report.md", markdown)
+    save(audit_id, "summary.md", summary)
     save(audit_id, "rejected.json", report.rejected_evidence_references)
     save(audit_id, "status.json", {"audit_id": audit_id, "state": report.state, "stage": "Report saved", "error": None})
     return report, markdown
@@ -377,3 +379,48 @@ def render_dynamic_sections(report: AuditReport) -> list[str]:
     if report.aggregated_score:
         lines.extend(["## Aggregated score", "", f"**{report.aggregated_score.score:g}/10** (provisional). {report.aggregated_score.rationale}", ""])
     return lines
+
+
+def render_summary(report: AuditReport) -> str:
+    """A short, plain-language summary for the end of the report and for the chat."""
+    static, dynamic, aggregated = report.static_score, report.dynamic_score, report.aggregated_score
+    fmt = lambda score: f"{score:g}/10" if score is not None else "not assessed"
+    claims = [c for c in report.generated_checks if c.get("kind", "claim") == "claim"]
+    matched = sum(1 for c in claims if c.get("matches")) + sum(1 for c in report.cached_result_comparisons if c.matches)
+    checked = len(claims) + len(report.cached_result_comparisons)
+    runs = report.dynamic_analysis.get("runs", [])
+    refs = report.references or {}
+    counts = refs.get("counts", {})
+    verdict = {"yes": "The code implements what the paper describes.", "partially": "The code implements most of what the paper describes, with the differences listed below.", "no": "The code does not implement what the paper describes.", "unknown": "Whether the code implements the paper could not be established."}[report.implementation_matches_paper]
+    lines = ["## Summary", "", verdict, "",
+             f"**Scores:** static {fmt(static.score)}, dynamic {fmt(dynamic.score)}, aggregated {fmt(aggregated.score) if aggregated else 'not assessed'}.", ""]
+    facts = []
+    if runs:
+        facts.append(f"{sum(1 for r in runs if r['succeeded'])} of {len(runs)} analysis scripts ran and regenerated their outputs.")
+    if checked:
+        facts.append(f"{matched} of {checked} reported numbers were recomputed from the stored data and matched.")
+    if refs.get("status") not in {None, "not_attempted"}:
+        facts.append(f"{counts.get('found', 0)} of {refs.get('total', 0)} references were confirmed in public registries" + ("" if refs.get("complete") else ", the rest were not checked because a lookup failed") + ".")
+    if facts:
+        lines.extend(["**What was verified:** " + " ".join(facts), ""])
+    top = [p for p in report.problems if p.severity != "informational"][:6]
+    if top:
+        lines.extend(["**Main problems:**", ""])
+        for problem in top:
+            lines.append(f"- **{problem.severity.capitalize()}:** {problem.title}" + (f" ({problem.location.split('/')[-1]})" if problem.location else "") + ".")
+        more = len([p for p in report.problems if p.severity != "informational"]) - len(top)
+        if more > 0:
+            lines.append(f"- {more} further problem(s) are listed above.")
+        lines.append("")
+    else:
+        lines.extend(["**Main problems:** none beyond informational notes.", ""])
+    gaps = []
+    if any(c.get("abandoned") for c in report.generated_checks):
+        gaps.append(f"{sum(1 for c in report.generated_checks if c.get('abandoned'))} check(s) were abandoned within the time budget")
+    if refs and not refs.get("complete"):
+        gaps.append("reference checking is incomplete")
+    if report.check_loop.get("status") == "blocked":
+        gaps.append("the check loop was blocked")
+    gaps.append("experiments were not rerun")
+    lines.extend(["**Not covered:** " + ", ".join(gaps) + ".", ""])
+    return "\n".join(lines)

@@ -130,3 +130,27 @@ def test_metric_trace_unions_two_passes():
     by_name = {m["name"]: m for m in result["metrics"]}
     assert by_name["NLL/Byte"]["consistent"] == "partially" and by_name["NLL/Byte"]["passes"] == [1, 2]
     assert by_name["Date filter"]["consistent"] == "yes" and result["limitations"] == ["a", "b"]
+
+
+def test_loop_keeps_round_one_when_the_revision_call_fails(tmp_path):
+    repository, dyn = _dynamic(tmp_path)
+
+    def fake_generate(prompt, schema):
+        if schema is CheckPlan:
+            return CheckPlan(checks=[{"claim_id": "C01", "kind": "claim", "description": "x", "script": GOOD, "expected_value": "2"},
+                                     {"claim_id": "C02", "kind": "claim", "description": "y", "script": BAD, "expected_value": "2"},
+                                     {"claim_id": "K01", "kind": "consistency", "description": "k", "script": CONSISTENCY}], notes=[])
+        if "Return assessments only" in prompt:
+            return RevisionPlan(revisions=[], assessments=[{"check_id": "K01", "issue": False, "severity": "informational", "title": "ok", "explanation": "fine"}], notes=["assessed"])
+        raise ValueError("Invalid JSON: EOF while parsing a string")
+
+    outcome = iterative_checks("audit-loop", repository, dyn, {"claims": [{"claim_id": "C01"}, {"claim_id": "C02"}]}, "{}", "code", generate=fake_generate)
+    by_id = {r["claim_id"]: r for r in outcome["results"]}
+    assert outcome["status"] == "completed" and by_id["C01"]["matches"] is True and by_id["C02"]["matches"] is False
+    assert any("revision call failed" in note for note in outcome["log"]) and outcome["assessments"][0]["check_id"] == "K01"
+
+
+def test_loop_reports_blocked_when_generation_fails(tmp_path):
+    repository, dyn = _dynamic(tmp_path)
+    outcome = iterative_checks("audit-loop", repository, dyn, {"claims": [{"claim_id": "C01"}]}, "{}", "code", generate=lambda *a: (_ for _ in ()).throw(ValueError("cut off")))
+    assert outcome["status"] == "blocked" and "cut off" in outcome["reason"] and outcome["results"] == []
