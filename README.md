@@ -27,6 +27,8 @@ The workflow has five visible stages. It normally makes two Gemini calls.
 
 The supplied paper links to an anonymized Figshare package. The discovery fallback searches Zenodo by title and requires metadata containing the exact arXiv identifier. It can find the later public package at https://zenodo.org/records/19564925. The report records that this package may differ from the paper's original package.
 
+Artifact discovery also recognizes Zenodo DOI links and follows metadata redirects after checking each destination. GitHub revisions are retrieved through Git, which avoids the unauthenticated GitHub API quota. If inspection is blocked, the interface displays the specific reason.
+
 To select that package explicitly, send this prompt.
 
 ```text

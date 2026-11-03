@@ -86,7 +86,8 @@ class InspectArtifacts(BaseAgent):
         if repository["status"] == "inspected":
             message = f"I indexed {repository['file_count']} files and read {repository['files_read']} small source files. The artifact revision is {repository['revision']}. The next agent will review the evidence and propose reproduction steps."
         else:
-            message = "Artifact inspection was blocked. The review will identify what remains unknown and preserve the blocker in the report."
+            reason = " ".join(repository.get("limitations", ["The cause is unknown."]))
+            message = f"Artifact inspection was blocked. {reason} The review will preserve this blocker in the report."
         yield progress(self.name, message, {"verified_manifest": manifest.model_dump(), "repository_context": json.dumps(context, ensure_ascii=False)})
 
 

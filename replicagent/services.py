@@ -10,6 +10,9 @@ import ipaddress
 import zipfile
 import sys
 import tempfile
+import os
+import subprocess
+import time
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlparse, quote
 
@@ -32,6 +35,19 @@ def public_url(url: str):
 
 
 def download(url: str, target: Path, limit: int = MAX_DOWNLOAD):
+    for attempt in range(3):
+        try:
+            return _download_once(url, target, limit)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code not in {429, 500, 502, 503, 504} or attempt == 2:
+                raise
+        except httpx.RequestError:
+            if attempt == 2:
+                raise
+        time.sleep(0.5 * (attempt + 1))
+
+
+def _download_once(url: str, target: Path, limit: int = MAX_DOWNLOAD):
     if target.exists() and target.stat().st_size > 0:
         return
     current = url
@@ -66,10 +82,33 @@ def download(url: str, target: Path, limit: int = MAX_DOWNLOAD):
 
 
 def get_json(url: str, params: dict | None = None):
-    public_url(url)
-    response = httpx.get(url, params=params, timeout=35, headers={"User-Agent": USER_AGENT})
-    response.raise_for_status()
-    return response.json()
+    for _ in range(6):
+        public_url(url)
+        response = httpx.get(url, params=params, timeout=35, headers={"User-Agent": USER_AGENT})
+        if response.is_redirect:
+            url = str(response.url.join(response.headers["location"]))
+            params = None
+            continue
+        response.raise_for_status()
+        return response.json()
+    raise ValueError("The metadata source redirected too many times.")
+
+
+def normalize_artifact_url(url: str) -> str | None:
+    parsed = urlparse(url.strip().rstrip(".,)"))
+    if parsed.scheme != "https":
+        return None
+    if parsed.hostname in {"doi.org", "dx.doi.org"}:
+        match = re.fullmatch(r"/10\.5281/zenodo\.(\d+)/?", parsed.path, re.I)
+        return f"https://zenodo.org/records/{match[1]}" if match else None
+    if parsed.hostname == "zenodo.org":
+        match = re.fullmatch(r"/(?:record|records)/(\d+)/?", parsed.path)
+        return f"https://zenodo.org/records/{match[1]}" if match else None
+    if parsed.hostname in {"github.com", "www.github.com"}:
+        parts = parsed.path.strip("/").split("/")
+        if len(parts) >= 2 and all(re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]*", part) for part in parts[:2]):
+            return f"https://github.com/{parts[0]}/{parts[1].removesuffix('.git')}"
+    return None
 
 
 def paper_url(source: str):
@@ -143,6 +182,7 @@ def discover_zenodo(title: str, source: str):
 
 
 def get_archive(url: str):
+    url = normalize_artifact_url(url) or url
     parsed = urlparse(url)
     if parsed.hostname in {"github.com", "www.github.com"}:
         segments = parsed.path.strip("/").split("/")
@@ -150,8 +190,19 @@ def get_archive(url: str):
             raise ValueError("The GitHub URL must identify a repository.")
         owner, repo = segments[:2]
         repo = repo.removesuffix(".git")
-        base = f"https://api.github.com/repos/{owner}/{repo}"
-        revision = get_json(base + "/commits", {"per_page": 1})[0]["sha"]
+        if not all(re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]*", part) for part in (owner, repo)):
+            raise ValueError("The GitHub repository path is invalid.")
+        public_url(f"https://github.com/{owner}/{repo}")
+        result = subprocess.run(
+            ["git", "ls-remote", "--exit-code", f"https://github.com/{owner}/{repo}.git", "HEAD"],
+            capture_output=True, text=True, timeout=30,
+            env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+        )
+        if result.returncode:
+            raise ValueError("Git could not read the public repository revision: " + result.stderr.strip()[:250])
+        revision = result.stdout.split()[0] if result.stdout.split() else ""
+        if not re.fullmatch(r"[0-9a-f]{40,64}", revision):
+            raise ValueError("Git returned an invalid repository revision.")
         return f"https://codeload.github.com/{owner}/{repo}/zip/{revision}", revision, {}
     if parsed.hostname == "zenodo.org":
         match = re.search(r"/(?:records|record)/(\d+)", parsed.path)
@@ -164,7 +215,7 @@ def get_archive(url: str):
         artifact = min(archives, key=lambda f: f["size"])
         if artifact["size"] > MAX_DOWNLOAD:
             raise ValueError("The replication package exceeds the 320 MiB demo limit.")
-        return artifact["links"]["self"], f"zenodo:{match[1]}", metadata
+        return artifact["links"]["self"], f"zenodo:{metadata.get('id', match[1])}", metadata
     raise ValueError("Static package inspection currently supports public GitHub and Zenodo ZIP archives.")
 
 
@@ -247,9 +298,11 @@ def inspect_repository(audit_id: str, manifest: dict, document: dict, repository
     attempts = []
     source = repository_url
     if not source:
-        links = document["links"] + manifest.get("artifact_urls", [])
-        supported = [u for u in links if urlparse(u).hostname in {"github.com", "zenodo.org"}]
+        links = manifest.get("artifact_urls", []) + document["links"]
+        supported = list(dict.fromkeys(normalized for url in links if (normalized := normalize_artifact_url(url))))
         source = supported[0] if supported else None
+    if source:
+        source = normalize_artifact_url(source) or source
     if not source:
         try:
             source = discover_zenodo(manifest["title"], document["source"])
