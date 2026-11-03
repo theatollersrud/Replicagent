@@ -10,6 +10,8 @@ The controller can spend additional time uploading the package and waiting for C
 
 The cloud worker is built with Dockerfile.dynamic-worker and cloudbuild.dynamic.yaml. The managed preview agent is deployed with scripts/deploy_runtime.py using --display-name and --dynamic-job-name. The original main deployment remains unchanged.
 
+The cloud verification on 2026-11-03 completed all seven original code cells in the supplied paper's notebook. The worker completed in 13.54 seconds including preparation and generated nine PDF figures. The report gave a static score of 7/10 and a dynamic score of 4/10, with result reproduction unassessed. A separate notebook that slept for 300 seconds was stopped after 110.25 seconds. The worker job also has a hard 120-second timeout. The preview application passed 46 tests inside Google Cloud. The verified request ID is recorded in cloud-deployment.dynamic.json, and its result is stored under dynamic/<request_id>/result.json in the private project bucket.
+
 Replicagent is a Google Agent Development Kit (ADK) demo that reads a research paper, discovers a replication package, inspects its source files, and saves an evidence-grounded static reproducibility report.
 
 ## Use the shared Google Cloud agent

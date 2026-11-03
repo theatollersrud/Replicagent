@@ -5,5 +5,15 @@
   "job_name": "replicagent-dynamic",
   "task_timeout_seconds": 120,
   "max_retries": 0,
-  "worker_image": "europe-west4-docker.pkg.dev/agentic-oslo-team-12-9afd/replicagent/dynamic-worker:prototype-2"
+  "worker_image": "europe-west4-docker.pkg.dev/agentic-oslo-team-12-9afd/replicagent/dynamic-worker:prototype-2",
+  "verified_run": {
+    "audit_id": "4b673bf9fd90",
+    "request_id": "3ef30f7a84e84378bdc2590f389edb54",
+    "static_score": 7,
+    "dynamic_score": 4,
+    "worker_elapsed_seconds": 13.54,
+    "original_code_cells_completed": 7,
+    "pdf_figures_generated": 9,
+    "result_reproduction": "not_attempted"
+  }
 }
