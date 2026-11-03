@@ -89,6 +89,8 @@ adk web --port 8000
 
 The model client uses application default credentials when configured. In the prepared local WSL environment, it otherwise obtains short-lived tokens from the existing `gcloud` login. It keeps those tokens in memory. It does not write or print tokens. Model calls use the active Google Cloud project's billing.
 
+The workflow leaves model reasoning and output-token settings at the provider defaults. It imposes no reasoning budget or output-token cap. The local `gcloud` credential adapter asks the CLI for a token for each model request, so it does not assume an additional token lifetime. If a model returns invalid structured output or an authentication error, the affected stage retries once. A persistent failure records the specific error and marks the audit as blocked, while preserving the paper and existing evidence for diagnosis.
+
 You can change the model with `AUDITOR_MODEL` and the project with `GOOGLE_CLOUD_PROJECT`. The `.env.example` file documents the available settings.
 
 ## Run the tests
@@ -136,6 +138,7 @@ The implementation concentrates on a working demonstration within the requested 
 replicagent/
   agent.py       # The ADK workflow and model instructions live here.
   auth.py        # The Google Cloud model client is configured here.
+  runtime.py     # Model retries and persistent failure reporting live here.
   schemas.py     # Typed paper, finding, evidence, and report models live here.
   services.py    # Paper ingestion, discovery, and static inspection live here.
   storage.py     # Local audit storage and the evidence ledger live here.

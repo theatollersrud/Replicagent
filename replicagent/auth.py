@@ -5,7 +5,7 @@ import subprocess
 import shutil
 from functools import lru_cache
 from pathlib import Path
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 import google.auth
 from google.auth.credentials import Credentials
@@ -18,7 +18,9 @@ class GcloudCredentials(Credentials):
         self.token = subprocess.check_output(
             ["gcloud", "auth", "print-access-token"], text=True, timeout=30
         ).strip()
-        self.expiry = (datetime.now(timezone.utc) + timedelta(minutes=45)).replace(tzinfo=None)
+        # gcloud owns the real token lifetime. Ask it again for every request
+        # instead of claiming that its current token has another 45 minutes.
+        self.expiry = datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 @lru_cache(maxsize=1)
@@ -27,6 +29,11 @@ def local_credentials():
     if shutil.which("gcloud") and not os.getenv("GOOGLE_APPLICATION_CREDENTIALS") and not adc.exists():
         return GcloudCredentials()
     return google.auth.default()[0]
+
+
+def refresh_credentials():
+    from google.auth.transport.requests import Request
+    local_credentials().refresh(Request())
 
 
 def model():

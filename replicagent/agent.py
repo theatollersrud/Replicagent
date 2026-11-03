@@ -16,6 +16,7 @@ from .reporting import finalize, validate_manifest
 from .schemas import PaperManifest, Review
 from .services import ingest_paper, inspect_repository
 from .storage import ROOT, read, save
+from .runtime import AuditLlmAgent
 
 load_dotenv(ROOT / ".env", override=False)
 
@@ -122,18 +123,18 @@ class GenerateReport(BaseAgent):
 
 
 ingest = IngestPaper(name="IngestPaper", description="The paper is read and its source pages are recorded.")
-understand = LlmAgent(
+understand = AuditLlmAgent(
     name="UnderstandPaper", description="Gemini extracts empirical claims with exact source quotes.",
     model=model(), instruction=paper_instruction, include_contents="none",
     output_schema=PaperManifest, output_key="paper_manifest",
-    generate_content_config=types.GenerateContentConfig(temperature=0.1, max_output_tokens=7000),
+    generate_content_config=types.GenerateContentConfig(temperature=0.1),
 )
 inspect = InspectArtifacts(name="InspectArtifacts", description="Artifact discovery and bounded static inspection run deterministically.")
-review = LlmAgent(
+review = AuditLlmAgent(
     name="ReviewEvidence", description="Gemini interprets source evidence and proposes reproduction steps.",
     model=model(), instruction=review_instruction, include_contents="none",
     output_schema=Review, output_key="review",
-    generate_content_config=types.GenerateContentConfig(temperature=0.1, max_output_tokens=9000),
+    generate_content_config=types.GenerateContentConfig(temperature=0.1),
 )
 report = GenerateReport(name="VerifyAndScore", description="Evidence references are checked, the score is calculated, and reports are saved.")
 
