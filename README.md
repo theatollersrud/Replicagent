@@ -19,7 +19,7 @@ Audit https://arxiv.org/abs/2510.21513v2
 
 The workflow has five visible stages. It normally makes two Gemini calls.
 
-1. `IngestPaper` extracts the paper text and records page evidence.
+1. `IngestPaper` reads the paper and records its source evidence. For arXiv papers it downloads the LaTeX source first and falls back to PDF text extraction only when arXiv offers no source.
 2. `UnderstandPaper` extracts empirical claims using Gemini and a typed output schema.
 3. `InspectArtifacts` discovers the replication package and inspects source files without executing them.
 4. `ReviewEvidence` interprets the evidence and proposes reproduction steps using Gemini.
@@ -61,9 +61,15 @@ On `main`, dynamic execution is unattempted and the dynamic score is displayed a
 
 For the supplied replication package, the report can independently count the union of solved problems across all models from the authors' cached CSV labels. It can compare those counts with extracted theoretical-maximum claims. It reads the LiveCodeBench date filter from the authors' analysis notebook through Python's source parser and applies that filter to the benchmark metadata. It does not execute the notebook. These checks test consistency with stored labels and do not independently establish that the generated programs pass their tests.
 
+## LaTeX sources are preferred
+
+For an arXiv URL, the demo downloads the e-print at `https://arxiv.org/e-print/<id>` before the PDF. The LaTeX source keeps every table row intact, whereas PDF text extraction can garble table markers and superscripts. The e-print is read as a gzip or tar archive, the file containing `\documentclass` is selected, and `\input` and `\include` references to files in the archive are inlined so that one document holds every table. The flattened source is saved under `inputs/` and recorded in the evidence ledger with the method `LaTeX source read`. When arXiv has no LaTeX source, the audit records that in `paper.json` under `ingestion_notes` and uses the PDF.
+
+The claim extractor is told when it reads LaTeX. It is informed that cells are separated by `&`, that `\textbf{122}` is 122, that `\hphantom{1}89` is 89, and that `$^{(-6.35)}$` is a superscript annotation. The evidence check compares LaTeX quotes on their visible content, so a quote written as `64^{(-6.35)}` verifies against a source line containing `64$^{(-6.35)}$`. Numbers must still appear in the same order; the check only ignores `$`, braces, and formatting commands. This tolerance applies to LaTeX evidence only. PDF evidence is still matched on its exact extracted text.
+
 ## Use another paper
 
-The web prompt accepts an arXiv URL, a public PDF URL, and an optional public GitHub or Zenodo repository URL. PDF attachments are supported when ADK provides their bytes as an inline PDF attachment. A local `.tex` file can be submitted through the terminal runner or API after copying it into the project folder. The demo reads the single LaTeX source file without compiling it or resolving includes.
+The web prompt accepts an arXiv URL (LaTeX source preferred, PDF fallback), a public PDF URL, and an optional public GitHub or Zenodo repository URL. PDF attachments are supported when ADK provides their bytes as an inline PDF attachment. A local `.tex` file can be submitted through the terminal runner or API after copying it into the project folder. The demo reads the single LaTeX source file without compiling it or resolving includes.
 
 ```bash
 python3.12 -m scripts.run_audit https://arxiv.org/abs/2510.21513v2
@@ -99,7 +105,7 @@ You can change the model with `AUDITOR_MODEL` and the project with `GOOGLE_CLOUD
 python3.12 -m pytest -q
 ```
 
-The tests use synthetic fixtures and make no paid model calls. They cover unresolved scores, missing-code caps, invalid evidence rejection, archive traversal checks, static syntax inspection without execution, cached-result counting, and the local API lifecycle.
+The tests use synthetic fixtures and make no paid model calls. They cover unresolved scores, missing-code caps, invalid evidence rejection, archive traversal checks, static syntax inspection without execution, cached-result counting, arXiv LaTeX source selection with PDF fallback, LaTeX-aware quote matching, and the local API lifecycle.
 
 ## Use the optional API
 

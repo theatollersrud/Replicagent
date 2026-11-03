@@ -19,6 +19,7 @@ from urllib.parse import urlparse, quote
 import httpx
 from pypdf import PdfReader
 
+from .latex import LATEX_METHOD, arxiv_identifier, arxiv_source_url, extract_latex_source
 from .storage import EvidenceLedger, ROOT, audit_dir, save
 
 MAX_DOWNLOAD = 320 * 1024 * 1024
@@ -116,17 +117,43 @@ def paper_url(source: str):
     return f"https://arxiv.org/pdf/{match[1]}" if match else source
 
 
+def fetch_arxiv_latex(identifier: str) -> Path | None:
+    """Download the arXiv e-print and return a flattened .tex file, or None when no LaTeX source is offered."""
+    url = arxiv_source_url(identifier)
+    key = hashlib.sha256(url.encode()).hexdigest()[:20]
+    archive = ROOT / "inputs" / f"{key}.eprint"
+    download(url, archive, 50 * 1024 * 1024)
+    text = extract_latex_source(archive.read_bytes())
+    if text is None:
+        return None
+    path = ROOT / "inputs" / f"{key}.tex"
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
 def ingest_paper(audit_id: str, source: str, upload: bytes | None = None):
     ledger = EvidenceLedger(audit_id)
+    notes = []
     if upload:
         path = audit_dir(audit_id) / "paper.pdf"
         path.write_bytes(upload)
         source = "uploaded-paper.pdf"
     elif source.startswith("https://"):
-        url = paper_url(source)
-        key = hashlib.sha256(url.encode()).hexdigest()[:20]
-        path = ROOT / "inputs" / f"{key}.pdf"
-        download(url, path, 25 * 1024 * 1024)
+        path = None
+        identifier = arxiv_identifier(source)
+        if identifier:
+            # The LaTeX source keeps tables intact, so it is preferred over PDF text extraction.
+            try:
+                path = fetch_arxiv_latex(identifier)
+                if path is None:
+                    notes.append("arXiv offers no LaTeX source for this paper. The PDF text was used instead.")
+            except Exception as exc:
+                notes.append(f"The arXiv LaTeX source could not be used ({type(exc).__name__}: {str(exc)[:200]}). The PDF text was used instead.")
+        if path is None:
+            url = paper_url(source)
+            key = hashlib.sha256(url.encode()).hexdigest()[:20]
+            path = ROOT / "inputs" / f"{key}.pdf"
+            download(url, path, 25 * 1024 * 1024)
     else:
         path = Path(source).expanduser().resolve()
         if not path.is_relative_to(ROOT.resolve()):
@@ -134,6 +161,7 @@ def ingest_paper(audit_id: str, source: str, upload: bytes | None = None):
     if path.suffix.lower() == ".tex":
         pages = [path.read_text(encoding="utf-8")]
         links = re.findall(r"https://[^\s{}<>]+", pages[0])
+        paper_format = "latex"
     else:
         reader = PdfReader(path)
         if len(reader.pages) > 80:
@@ -146,21 +174,24 @@ def ingest_paper(audit_id: str, source: str, upload: bytes | None = None):
                 if uri.startswith("https://"):
                     links.append(uri)
         links.extend(re.findall(r"https://[^\s<>]+", "\n".join(pages)))
+        paper_format = "pdf"
     if sum(len(page.strip()) for page in pages) < 200:
         raise ValueError("The paper has insufficient extractable text. The demo does not perform OCR.")
     records = []
     text_budget = 180_000
     for index, text in enumerate(pages, 1):
-        record = ledger.add("paper", source, f"page {index}", text, "PDF text extraction" if path.suffix.lower() == ".pdf" else "LaTeX source read")
+        location = "LaTeX source" if paper_format == "latex" else f"page {index}"
+        record = ledger.add("paper", source, location, text, LATEX_METHOD if paper_format == "latex" else "PDF text extraction")
         if text_budget > 0:
             excerpt = text[:text_budget]
             records.append({"evidence_id": record.evidence_id, "location": record.location, "text": excerpt})
             text_budget -= len(excerpt)
     document = {
-        "source": source, "local_path": str(path), "pages": len(pages),
+        "source": source, "local_path": str(path), "format": paper_format, "pages": len(pages),
         "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
         "links": sorted(set(links)), "evidence": records,
         "text_truncated": sum(map(len, pages)) > 180_000,
+        "ingestion_notes": notes,
     }
     save(audit_id, "paper.json", document)
     return document

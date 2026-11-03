@@ -6,6 +6,7 @@ import os
 import re
 from pathlib import Path
 
+from .latex import LATEX_METHOD, latex_normalise
 from .schemas import Evidence
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -62,4 +63,10 @@ def verify_quote(evidence: dict, evidence_id: str, quote: str) -> bool:
     if hashlib.sha256(record.observation.encode()).hexdigest() != record.content_hash:
         return False
     normalise = lambda s: " ".join(s.split()).casefold()
-    return normalise(quote) in normalise(evidence[evidence_id].observation)
+    if normalise(quote) in normalise(record.observation):
+        return True
+    # LaTeX sources are compared on their visible content, so `64$^{(-6.35)}$` matches `64^{(-6.35)}`.
+    if record.verification_method == LATEX_METHOD:
+        reduced = latex_normalise(quote)
+        return len(reduced) >= 8 and reduced in latex_normalise(record.observation)
+    return False
