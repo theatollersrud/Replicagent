@@ -19,6 +19,7 @@ dependencies = [
 
 [project.optional-dependencies]
 test = ["pytest==9.0.2"]
+cloud = ["google-cloud-agentplatform[adk]==2.7.0"]
 
 [tool.setuptools.packages.find]
 include = ["replicagent*"]

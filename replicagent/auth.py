@@ -43,7 +43,7 @@ def model():
         client_kwargs={
             "vertexai": True,
             "project": os.getenv("GOOGLE_CLOUD_PROJECT", "agentic-oslo-team-12-9afd"),
-            "location": os.getenv("GOOGLE_CLOUD_LOCATION", "global"),
+            "location": os.getenv("AUDITOR_MODEL_LOCATION", os.getenv("GOOGLE_CLOUD_LOCATION", "global")),
             "credentials": credentials,
         },
         retry_options=types.HttpRetryOptions(attempts=3, initial_delay=2, max_delay=10),

@@ -92,7 +92,9 @@ def test_gcloud_credentials_do_not_assume_an_extra_lifetime(monkeypatch):
     assert len(calls) == 2
 
 
-def test_model_configuration_keeps_reasoning_and_output_defaults():
+def test_model_configuration_keeps_reasoning_and_output_defaults(monkeypatch):
+    from google.auth.credentials import AnonymousCredentials
+    monkeypatch.setattr(auth, "local_credentials", lambda: AnonymousCredentials())
     from replicagent.agent import understand, review
     for agent in (understand, review):
         assert agent.generate_content_config.max_output_tokens is None

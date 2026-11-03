@@ -1,8 +1,36 @@
 # Replicagent
 
-Replicagent is a local Google Agent Development Kit (ADK) demo that reads a research paper, discovers a replication package, inspects its source files, and saves an evidence-grounded static reproducibility report.
+Replicagent is a Google Agent Development Kit (ADK) demo that reads a research paper, discovers a replication package, inspects its source files, and saves an evidence-grounded static reproducibility report.
 
-## Start the demo
+## Use the shared Google Cloud agent
+
+Open [Replicagent's Playground](https://console.cloud.google.com/vertex-ai/agents/agent-engines/locations/europe-west4/agent-engines/649037315829661696/playground?project=agentic-oslo-team-12-9afd) while signed into your project account. You can also find **Replicagent** under **Agent Platform → Deployments** in project `agentic-oslo-team-12-9afd`. Select the `europe-west4` region if the console asks for a region.
+
+Send `Audit https://arxiv.org/abs/2510.21513v2` in the Playground. The agent and Gemini calls run in Google Cloud. Project users need permission to view and query Agent Runtime. Project Editor and Agent Platform Administrator access cover the current demo account. Access for a different account depends on that account's assigned permissions.
+
+Agent Studio's designer list contains agents created through the designer. This code-defined agent is accessed through Deployments and its Playground.
+
+The managed deployment uses Google Cloud session storage. Final chat reports remain in their sessions. Intermediate audit files and downloaded packages use the container filesystem and can disappear when the container is replaced. The separate Cloud Run deployment mounts a Cloud Storage bucket for its audit files.
+
+## Deploy an updated cloud version
+
+The deployment metadata is recorded in `cloud-deployment.json`. Cloud Build runs the unit tests inside Google Cloud before publishing the container image. These commands build and update the managed agent. They require a Google Cloud login and the deployment dependencies, available through `pip install '.[cloud]'`.
+
+```bash
+gcloud builds submit --project=agentic-oslo-team-12-9afd \
+  --config=cloudbuild.yaml \
+  --substitutions=_IMAGE=europe-west4-docker.pkg.dev/agentic-oslo-team-12-9afd/replicagent/agent:YOUR_TAG
+python scripts/deploy_runtime.py \
+  --project=agentic-oslo-team-12-9afd --region=europe-west4 \
+  --runtime-name=projects/674330246692/locations/europe-west4/reasoningEngines/649037315829661696 \
+  --service-account=674330246692-compute@developer.gserviceaccount.com \
+  --artifact-bucket=agentic-oslo-team-12-9afd-replicagent \
+  --image=europe-west4-docker.pkg.dev/agentic-oslo-team-12-9afd/replicagent/agent:YOUR_TAG
+```
+
+The deployment helper uses application default credentials or the deploying user's existing `gcloud` login. It keeps access tokens in memory. The deployed agent uses its Google Cloud service account.
+
+## Run a local development copy
 
 Open your Ubuntu WSL terminal and run these commands from this project folder.
 
@@ -134,11 +162,11 @@ Submit `{"paper_source":"https://arxiv.org/abs/2510.21513v2"}` for a live audit.
 
 ## Scope and deviations from the full specification
 
-This demo combines a small foundation with real PDF ingestion, limited artifact discovery, static inspection, and two functioning Gemini agents. It uses current ADK `Workflow` graph edges instead of the older sequential-workflow abstraction. It uses local files instead of PostgreSQL and cloud object storage, so it requires no infrastructure deployment.
+This demo combines real PDF ingestion, limited artifact discovery, static inspection, and two functioning Gemini agents. It uses current ADK `Workflow` graph edges. It can run locally, in Cloud Run, or in Agent Runtime with the shared console Playground. Audit files use the filesystem. Managed Agent Runtime sessions use Google Cloud session storage, and the Cloud Run deployment stores audit files on a mounted Cloud Storage bucket.
 
 The demo does not implement isolated code execution, execution-based result reproduction, full training runs, repository repair, source-archive paper ingestion, LaTeX include resolution, mathematical verification, or comprehensive reference verification. The execution route reports `not_attempted`. Docker is unavailable in the prepared WSL environment. Source code from audited packages is never imported or executed by the workflow.
 
-The implementation concentrates on a working demonstration within the requested time limit. It goes beyond the specification's mock-only first milestone to support the supplied paper, while leaving the larger execution and deployment system for later work.
+The implementation supports the supplied paper and a managed cloud deployment. Isolated execution remains a separate feature-branch task.
 
 ## Project files
 

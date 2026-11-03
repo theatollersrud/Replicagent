@@ -1,0 +1,11 @@
+.git
+**/__pycache__
+**/.pytest_cache
+**/.adk
+.venv
+.env
+audits
+inputs
+*.log
+demo-screenshot.png
+feature-work
