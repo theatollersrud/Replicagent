@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+import pytest
 
 
 def test_cloud_entry_point_has_one_agent_and_the_report_api(monkeypatch, tmp_path):
@@ -12,6 +13,7 @@ def test_cloud_entry_point_has_one_agent_and_the_report_api(monkeypatch, tmp_pat
 
 
 def test_managed_playground_routes_use_the_adk_session_service(monkeypatch):
+    pytest.importorskip("agentplatform.frameworks")
     import google.auth
     from google.auth.credentials import AnonymousCredentials
     from replicagent.cloud import create_app

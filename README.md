@@ -14,18 +14,14 @@ The managed deployment uses Google Cloud session storage. Final chat reports rem
 
 ## Deploy an updated cloud version
 
-The deployment metadata is recorded in `cloud-deployment.json`. Cloud Build runs the unit tests inside Google Cloud before publishing the container image. These commands build and update the managed agent. They require a Google Cloud login and the deployment dependencies, available through `pip install '.[cloud]'`.
+The deployment metadata is recorded in `cloud-deployment.json`. The deployment helper uploads an explicit list of source files. Agent Runtime builds the Dockerfile and runs the unit tests inside Google Cloud. This command updates the managed agent. It requires a Google Cloud login and the deployment dependencies, available through `pip install '.[cloud]'` in a virtual environment.
 
 ```bash
-gcloud builds submit --project=agentic-oslo-team-12-9afd \
-  --config=cloudbuild.yaml \
-  --substitutions=_IMAGE=europe-west4-docker.pkg.dev/agentic-oslo-team-12-9afd/replicagent/agent:YOUR_TAG
 python scripts/deploy_runtime.py \
   --project=agentic-oslo-team-12-9afd --region=europe-west4 \
   --runtime-name=projects/674330246692/locations/europe-west4/reasoningEngines/649037315829661696 \
   --service-account=674330246692-compute@developer.gserviceaccount.com \
-  --artifact-bucket=agentic-oslo-team-12-9afd-replicagent \
-  --image=europe-west4-docker.pkg.dev/agentic-oslo-team-12-9afd/replicagent/agent:YOUR_TAG
+  --artifact-bucket=agentic-oslo-team-12-9afd-replicagent
 ```
 
 The deployment helper uses application default credentials or the deploying user's existing `gcloud` login. It keeps access tokens in memory. The deployed agent uses its Google Cloud service account.
@@ -164,7 +160,7 @@ Submit `{"paper_source":"https://arxiv.org/abs/2510.21513v2"}` for a live audit.
 
 This demo combines real PDF ingestion, limited artifact discovery, static inspection, and two functioning Gemini agents. It uses current ADK `Workflow` graph edges. It can run locally, in Cloud Run, or in Agent Runtime with the shared console Playground. Audit files use the filesystem. Managed Agent Runtime sessions use Google Cloud session storage, and the Cloud Run deployment stores audit files on a mounted Cloud Storage bucket.
 
-The demo does not implement isolated code execution, execution-based result reproduction, full training runs, repository repair, source-archive paper ingestion, LaTeX include resolution, mathematical verification, or comprehensive reference verification. The execution route reports `not_attempted`. Docker is unavailable in the prepared WSL environment. Source code from audited packages is never imported or executed by the workflow.
+The demo does not implement isolated code execution, execution-based result reproduction, full training runs, repository repair, LaTeX compilation, mathematical verification, or comprehensive reference verification. The execution route reports `not_attempted`. Source code from audited packages is never imported or executed by the workflow.
 
 The implementation supports the supplied paper and a managed cloud deployment. Isolated execution remains a separate feature-branch task.
 
