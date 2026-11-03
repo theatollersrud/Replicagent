@@ -61,6 +61,8 @@ Audit https://arxiv.org/abs/2510.21513v2 using https://zenodo.org/records/195649
 
 The first run downloads the paper and replication package. Later runs reuse those downloads. Each run performs fresh model analysis and saves a new audit. Cached downloads do not imply cached model responses.
 
+Every audit requires a paper supplied in the current request. The agent accepts arXiv identifiers, paper URLs (including PDF download links with query parameters), and PDF attachments. It announces the selected source before reading it. If the input is missing, ambiguous, or unreadable, the workflow stops and explains what is needed. It never substitutes the example paper or reuses a previous request's paper automatically.
+
 ## Read the result
 
 The final report appears in the chat. Each audit also creates the following files.

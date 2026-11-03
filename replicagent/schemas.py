@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class Status(StrEnum):
@@ -111,9 +111,15 @@ class ScoreBreakdown(BaseModel):
 
 
 class AuditRequest(BaseModel):
-    paper_source: str = "https://arxiv.org/abs/2510.21513"
+    paper_source: str | None = None
     repository_url: str | None = None
     mock: bool = False
+
+    @model_validator(mode="after")
+    def require_paper_for_live_audit(self):
+        if not self.mock and not (self.paper_source and self.paper_source.strip()):
+            raise ValueError("A paper_source is required for a live audit.")
+        return self
 
 
 class AuditReport(BaseModel):

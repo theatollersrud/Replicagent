@@ -2,7 +2,6 @@
 
 import asyncio
 import json
-import re
 import uuid
 
 from dotenv import load_dotenv
@@ -17,17 +16,15 @@ from .schemas import PaperManifest, Review
 from .services import ingest_paper, inspect_repository
 from .storage import ROOT, read, save
 from .runtime import AuditLlmAgent
+from .paper_input import PaperInputError, select_paper
 
 load_dotenv(ROOT / ".env", override=False)
 
-DEFAULT_PAPER = "https://arxiv.org/abs/2510.21513v2"
-
-
-def progress(name: str, message: str, delta: dict | None = None):
+def progress(name: str, message: str, delta: dict | None = None, route: str | None = None):
     return Event(
         author=name,
         content=types.Content(role="model", parts=[types.Part(text=message)]),
-        actions=EventActions(state_delta=delta or {}),
+        actions=EventActions(state_delta=delta or {}, route=route),
     )
 
 
@@ -37,27 +34,32 @@ def set_stage(audit_id: str, stage: str, error=None):
 
 class IngestPaper(BaseAgent):
     async def _run_async_impl(self, ctx):
-        audit_id = ctx.session.state.get("requested_audit_id") or uuid.uuid4().hex[:12]
-        text = " ".join(part.text for part in (ctx.user_content.parts or []) if part.text)
-        urls = re.findall(r"https://[^\s<>\]\)\"']+", text)
-        source = next((url for url in urls if "arxiv.org" in url or url.lower().endswith((".pdf", ".tex"))), None)
-        source = source or ctx.session.state.get("requested_paper_source") or DEFAULT_PAPER
-        repository = ctx.session.state.get("requested_repository_url") or next((url for url in urls if "github.com" in url or "zenodo.org" in url), None)
-        upload = next((part.inline_data.data for part in (ctx.user_content.parts or []) if part.inline_data and part.inline_data.mime_type == "application/pdf"), None)
-        # A local path is accepted only inside the project, through the API request.
-        set_stage(audit_id, "Reading the paper")
-        yield progress(self.name, f"I am reading the paper and recording its source pages. The audit ID is {audit_id}.", {"audit_id": audit_id, "repository_url": repository})
+        cleared = {key: None for key in (
+            "audit_id", "paper_context", "paper_manifest", "verified_manifest", "review",
+            "repository_url", "repository_context", "report_id", "report_path",
+            "static_score", "dynamic_score", "requested_paper_source",
+            "requested_repository_url", "requested_audit_id",
+        )}
         try:
-            document = await asyncio.to_thread(ingest_paper, audit_id, source, upload)
+            selected = await select_paper(ctx)
+        except PaperInputError as exc:
+            yield progress(self.name, str(exc), cleared, route="needs_input")
+            return
+        audit_id = selected.requested_audit_id or uuid.uuid4().hex[:12]
+        set_stage(audit_id, "Reading the paper")
+        yield progress(self.name, f"I am reading {selected.source}. The audit ID is {audit_id}.", {**cleared, "audit_id": audit_id, "repository_url": selected.repository_url})
+        try:
+            document = await asyncio.to_thread(ingest_paper, audit_id, selected.source, selected.upload)
         except Exception as exc:
             set_stage(audit_id, "Paper ingestion was blocked", str(exc))
-            raise
+            yield progress(self.name, f"I could not read {selected.source}: {str(exc)[:400]}. Please provide a readable PDF attachment, an arXiv link, or a direct PDF link.", route="blocked")
+            return
         if document.get("format") == "latex":
             message = f"I read the paper's LaTeX source ({len(document['evidence'][0]['text']):,} characters), which keeps its tables intact. The next agent will identify the paper's reported results."
         else:
             message = f"I extracted text from {document['pages']} PDF pages. The next agent will identify the paper's reported results."
         notes = " ".join(document.get("ingestion_notes", []))
-        yield progress(self.name, f"{message} {notes}".strip(), {"paper_context": json.dumps(document, ensure_ascii=False), "paper_manifest": None, "review": None})
+        yield progress(self.name, f"{message} {notes}".strip(), {"paper_context": json.dumps(document, ensure_ascii=False), "paper_manifest": None, "review": None}, route="ready")
 
 
 LATEX_GUIDANCE = """
@@ -161,5 +163,5 @@ report = GenerateReport(name="VerifyAndScore", description="Evidence references 
 root_agent = Workflow(
     name="Replicagent",
     description="The workflow audits paper artifacts and produces an evidence-grounded static reproducibility report.",
-    edges=[("START", ingest), (ingest, understand), (understand, inspect), (inspect, review), (review, report)],
+    edges=[("START", ingest), (ingest, {"ready": understand}), (understand, inspect), (inspect, review), (review, report)],
 )

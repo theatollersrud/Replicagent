@@ -128,6 +128,12 @@ def test_offline_api_lifecycle():
     assert client.get(f"/audits/{audit_id}/executions").json()["executions"] == []
 
 
+def test_live_api_requires_an_explicit_paper():
+    client = TestClient(app)
+    for request in [{}, {"paper_source": ""}, {"paper_source": "   "}]:
+        assert client.post("/audits", json=request).status_code == 422
+
+
 def test_invalid_evidence_is_removed_from_report():
     from replicagent.mock import run_mock
     from replicagent.reporting import finalize
