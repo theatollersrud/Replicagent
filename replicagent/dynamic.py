@@ -186,8 +186,10 @@ def _snapshot(root: Path) -> dict[str, int]:
     return {str(p.relative_to(root)): p.stat().st_mtime_ns for p in root.rglob("*") if p.is_file() and p.suffix.lower() in OUTPUT_SUFFIXES}
 
 
-def _run(command: list[str], cwd: Path, timeout: int) -> dict:
+def _run(command: list[str], cwd: Path, timeout: int, pythonpath: Path | None = None) -> dict:
     env = {**os.environ, "MPLBACKEND": "Agg", "PYTHONDONTWRITEBYTECODE": "1", "PYTHONUNBUFFERED": "1"}
+    if pythonpath is not None:
+        env["PYTHONPATH"] = str(pythonpath) + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
     started = time.monotonic()
     try:
         completed = subprocess.run(command, cwd=cwd, env=env, capture_output=True, text=True, timeout=timeout)
@@ -196,36 +198,67 @@ def _run(command: list[str], cwd: Path, timeout: int) -> dict:
         return {"exit_code": None, "stdout": (exc.stdout or b"")[-4000:].decode(errors="replace") if isinstance(exc.stdout, bytes) else (exc.stdout or "")[-4000:], "stderr": f"Timed out after {timeout} seconds.", "timed_out": True, "seconds": round(time.monotonic() - started, 1)}
 
 
-def _install_missing(stderr: str) -> str | None:
+def _local_module(root: Path, module: str) -> bool:
+    """True when the repository itself provides this module as a folder or file, so pip must not be asked for it."""
+    for path in root.rglob("*"):
+        if _audit_artifact(path):
+            continue
+        if path.name == module and path.is_dir() or path.name == f"{module}.py":
+            return True
+    return False
+
+
+def _install_missing(stderr: str, root: Path | None = None) -> str | None:
     match = re.search(r"No module named '([A-Za-z0-9_]+)", stderr)
     if not match:
         return None
     module = match.group(1)
+    if root is not None and _local_module(root, module):
+        return None
     package = PACKAGE_NAMES.get(module, module)
     result = subprocess.run([sys.executable, "-m", "pip", "install", "-q", package], capture_output=True, text=True, timeout=240)
     return package if result.returncode == 0 else None
 
 
+def _invocation(root: Path, script: Path) -> tuple[list[str], Path, str]:
+    """Scripts inside a package run as `python -m pkg.module` from the package root; others run from their own directory with the root importable."""
+    parts = script.relative_to(root).with_suffix("").parts
+    packaged = len(parts) > 1 and all((root / Path(*parts[:i])).joinpath("__init__.py").exists() for i in range(1, len(parts)))
+    if packaged and not script.name.startswith(".replicagent_"):
+        return [sys.executable, "-m", ".".join(parts)], root, "module"
+    return [sys.executable, str(script)], script.parent, "file"
+
+
 def run_script(root: Path, path: Path) -> dict:
-    """Run one analysis notebook or script from its own directory and record what it produced."""
+    """Run one analysis notebook or script and record what it produced. The audit environment, not the authors, is what is being tested."""
     if path.suffix == ".ipynb":
         script = path.with_name(f".replicagent_{path.stem}.py")
         script.write_text(notebook_code(path.read_text(encoding="utf-8", errors="replace")), encoding="utf-8")
     else:
         script = path
     before = _snapshot(root)
-    result = _run([sys.executable, str(script)], path.parent, SCRIPT_TIMEOUT)
+    command, cwd, mode = _invocation(root, script)
+    result = _run(command, cwd, SCRIPT_TIMEOUT, pythonpath=root)
     installed = []
+    if result["exit_code"] and re.search(r"ModuleNotFoundError|ImportError|No such file or directory|non-existent directory", result["stderr"]) and cwd != root:
+        # Retry from the package root: relative paths and package imports usually assume it.
+        retry = _run(command, root, SCRIPT_TIMEOUT, pythonpath=root)
+        if retry["exit_code"] == 0 or not re.search(r"ModuleNotFoundError|ImportError", retry["stderr"]):
+            result, cwd, mode = retry, root, mode + " from root"
     if result["exit_code"] and "No module named" in result["stderr"]:
-        package = _install_missing(result["stderr"])
+        package = _install_missing(result["stderr"], root)
         if package:
             installed.append(package)
-            result = _run([sys.executable, str(script)], path.parent, SCRIPT_TIMEOUT)
+            result = _run(command, cwd, SCRIPT_TIMEOUT, pythonpath=root)
     after = _snapshot(root)
     produced = sorted(p for p, stamp in after.items() if before.get(p) != stamp and not PurePosixPath(p).name.startswith(".replicagent_"))
     if path.suffix == ".ipynb":
         script.unlink(missing_ok=True)
-    return {"file": str(path.relative_to(root)), "kind": "notebook" if path.suffix == ".ipynb" else "script", **result, "installed_packages": installed, "produced_files": produced[:60], "succeeded": result["exit_code"] == 0}
+    missing = re.search(r"FileNotFoundError: (?:\[Errno 2\] No such file or directory: )?'?([^'\n]+?)'?\s*$", result["stderr"].strip()) if result["exit_code"] else None
+    missing_input = missing.group(1).strip() if missing else None
+    environment_failure = bool(result["exit_code"]) and not missing_input and bool(re.search(r"ModuleNotFoundError|ImportError|non-existent directory|PermissionError", result["stderr"]))
+    return {"file": str(path.relative_to(root)), "kind": "notebook" if path.suffix == ".ipynb" else "script", "invocation": mode, "cwd": str(cwd.relative_to(root)) or ".", **result,
+            "installed_packages": installed, "produced_files": produced[:60], "succeeded": result["exit_code"] == 0, "environment_failure": environment_failure, "missing_input": missing_input}
 
 
 def sanitize_script(source: str) -> str:
@@ -297,7 +330,7 @@ def run_dynamic_analysis(audit_id: str, repository: dict) -> dict:
     compile_record = ledger.add("dynamic_compile", source, revision, json.dumps(compiled, ensure_ascii=False, sort_keys=True), "Parsed every Python file and notebook with the audit interpreter's AST and probed third-party imports. Nothing was executed.")
     data_record = ledger.add("data_inventory", source, revision, json.dumps({k: v for k, v in data.items() if k != "files"} | {"files": data["files"][:120]}, ensure_ascii=False, sort_keys=True), "Listed data files by extension and counted CSV rows with a streaming reader.")
     for run in runs:
-        record = ledger.add("script_execution", source, f"{revision}, {run['file']}", json.dumps(run, ensure_ascii=False, sort_keys=True), f"Executed the file with {sys.executable} from its own directory under a {SCRIPT_TIMEOUT} second timeout and listed files it created or modified.")
+        record = ledger.add("script_execution", source, f"{revision}, {run['file']}", json.dumps(run, ensure_ascii=False, sort_keys=True), f"Executed the file with {sys.executable} ({run['invocation']}, cwd {run['cwd']}) under a {SCRIPT_TIMEOUT} second timeout and listed files it created or modified. A failure describes the audit environment, not the authors' run.")
         run["evidence_id"] = record.evidence_id
     return {
         "status": "completed", "package_root": str(root), "seconds": round(time.monotonic() - started, 1),

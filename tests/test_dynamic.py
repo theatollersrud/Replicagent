@@ -57,7 +57,7 @@ def test_analysis_scripts_exclude_inference_and_heavy_imports(tmp_path):
 
 
 def test_notebook_runs_from_its_directory_and_records_outputs(tmp_path, monkeypatch):
-    monkeypatch.setattr(dynamic, "_install_missing", lambda stderr: None)
+    monkeypatch.setattr(dynamic, "_install_missing", lambda stderr, root=None: None)
     root = dynamic.extract_archive(_package(tmp_path))
     run = dynamic.run_script(root, root / "analysis" / "make_table.ipynb")
     assert run["succeeded"] and "done" in run["stdout"]
@@ -80,7 +80,7 @@ def test_generated_check_compares_result_line(tmp_path):
 
 
 def test_dynamic_analysis_records_evidence_for_every_run(tmp_path, monkeypatch):
-    monkeypatch.setattr(dynamic, "_install_missing", lambda stderr: None)
+    monkeypatch.setattr(dynamic, "_install_missing", lambda stderr, root=None: None)
     repository = {"status": "inspected", "local_archive_path": str(_package(tmp_path)), "source": "fixture", "revision": "rev"}
     result = dynamic.run_dynamic_analysis("audit-dyn", repository)
     assert result["status"] == "completed"
@@ -197,3 +197,44 @@ def test_audit_artifacts_are_not_compiled_or_run(tmp_path):
     (root / "analysis" / ".replicagent_make_table.py").write_text("also not python")
     assert [f["file"] for f in dynamic.compile_check(root)["failures"]] == ["analysis/plot_broken.py"]
     assert not any(".replicagent" in str(p) for p in dynamic.find_analysis_scripts(root))
+
+
+def test_package_scripts_run_as_modules_from_the_root(tmp_path, monkeypatch):
+    archive = tmp_path / "pkg.zip"
+    with zipfile.ZipFile(archive, "w") as zf:
+        zf.writestr("repo/analysis/__init__.py", "")
+        zf.writestr("repo/analysis/load.py", "def rows():\n    return [1, 2]\n")
+        zf.writestr("repo/analysis/plot_counts.py", "from analysis.load import rows\nimport os\nos.makedirs('out', exist_ok=True)\nopen('out/figure_counts.txt', 'w').write(str(len(rows())))\nprint('ok')\n")
+        zf.writestr("repo/results.csv", "a\n1\n")
+    installs = []
+    monkeypatch.setattr(dynamic, "_install_missing", lambda stderr, root=None: installs.append(stderr) or None)
+    root = dynamic.extract_archive(archive)
+    run = dynamic.run_script(root, root / "analysis" / "plot_counts.py")
+    assert run["succeeded"] and run["invocation"] == "module" and run["cwd"] == "." and run["produced_files"] == ["out/figure_counts.txt"]
+    assert installs == []
+
+
+def test_local_modules_are_never_pip_installed(tmp_path, monkeypatch):
+    root = dynamic.extract_archive(_package(tmp_path))
+    (root / "analysis" / "__init__.py").write_text("")
+    calls = []
+    monkeypatch.setattr(dynamic.subprocess, "run", lambda *a, **k: calls.append(a) or type("R", (), {"returncode": 0})())
+    assert dynamic._install_missing("ModuleNotFoundError: No module named 'analysis.endogenous'", root) is None
+    assert dynamic._install_missing("ModuleNotFoundError: No module named 'plot_broken'", root) is None, "a local .py file counts as local"
+    assert calls == []
+    assert dynamic._install_missing("ModuleNotFoundError: No module named 'seaborn'", root) == "seaborn" and len(calls) == 1
+
+
+def test_environment_failures_are_marked(tmp_path, monkeypatch):
+    monkeypatch.setattr(dynamic, "_install_missing", lambda stderr, root=None: None)
+    root = dynamic.extract_archive(_package(tmp_path))
+    run = dynamic.run_script(root, root / "analysis" / "needs_module.py")
+    assert not run["succeeded"] and run["environment_failure"] is True
+
+
+def test_missing_input_files_are_reported_by_name(tmp_path, monkeypatch):
+    monkeypatch.setattr(dynamic, "_install_missing", lambda stderr, root=None: None)
+    root = dynamic.extract_archive(_package(tmp_path))
+    (root / "analysis" / "plot_missing.py").write_text("import pandas as pd\npd.read_csv('data_raw/posts.csv')\n")
+    run = dynamic.run_script(root, root / "analysis" / "plot_missing.py")
+    assert not run["succeeded"] and run["missing_input"] == "data_raw/posts.csv" and run["environment_failure"] is False
