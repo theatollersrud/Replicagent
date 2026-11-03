@@ -3,17 +3,143 @@
   "region": "europe-west4",
   "runtime_name": "projects/674330246692/locations/europe-west4/reasoningEngines/8845588637643964416",
   "job_name": "replicagent-dynamic",
-  "task_timeout_seconds": 120,
+  "task_timeout_seconds": 300,
   "max_retries": 0,
-  "worker_image": "europe-west4-docker.pkg.dev/agentic-oslo-team-12-9afd/replicagent/dynamic-worker:prototype-2",
-  "verified_run": {
-    "audit_id": "4b673bf9fd90",
-    "request_id": "3ef30f7a84e84378bdc2590f389edb54",
+  "worker_image": "europe-west4-docker.pkg.dev/agentic-oslo-team-12-9afd/replicagent/dynamic-worker:generic-4",
+  "automated_checks_passed": 84,
+  "live_cloud_checks": [
+    {
+      "case": "shell_example",
+      "request_id": "0e0d34f28c794193b84a7f2700b865b7",
+      "passed": true,
+      "elapsed_seconds": 7.19,
+      "attempts": [
+        {
+          "argv": [
+            "bash",
+            "tools/run-example.sh"
+          ],
+          "kind": "run",
+          "exit_code": 0,
+          "timed_out": false
+        },
+        {
+          "argv": [
+            "cat",
+            "results/series.json"
+          ],
+          "kind": "test",
+          "exit_code": 0,
+          "timed_out": false
+        }
+      ],
+      "worker_image_tag": "generic-3"
+    },
+    {
+      "case": "dependency_tests",
+      "request_id": "03a465ef4d0347abb69629b747d3fa29",
+      "passed": true,
+      "elapsed_seconds": 11.92,
+      "attempts": [
+        {
+          "argv": [
+            "python",
+            "-m",
+            "unittest",
+            "discover",
+            "-s",
+            "checks",
+            "-v"
+          ],
+          "kind": "test",
+          "exit_code": 1,
+          "timed_out": false
+        },
+        {
+          "argv": [
+            "python",
+            "-m",
+            "pip",
+            "install",
+            "-r",
+            "requirements.txt"
+          ],
+          "kind": "setup",
+          "exit_code": 0,
+          "timed_out": false
+        },
+        {
+          "argv": [
+            "python",
+            "-m",
+            "unittest",
+            "discover",
+            "-s",
+            "checks",
+            "-v"
+          ],
+          "kind": "test",
+          "exit_code": 0,
+          "timed_out": false
+        }
+      ],
+      "worker_image_tag": "generic-3"
+    },
+    {
+      "case": "runtime_failure",
+      "request_id": "d2d230647b644bd197ff4f907e80700a",
+      "passed": true,
+      "elapsed_seconds": 5.96,
+      "attempts": [
+        {
+          "argv": [
+            "python",
+            "evaluate.py"
+          ],
+          "kind": "run",
+          "exit_code": 1,
+          "timed_out": false
+        }
+      ],
+      "worker_image_tag": "generic-3"
+    },
+    {
+      "case": "timeout_command",
+      "request_id": "1c01e9b0fd6c4072bc306577ec3afe7b",
+      "passed": true,
+      "elapsed_seconds": 6.66,
+      "attempts": [
+        {
+          "argv": [
+            "bash",
+            "-lc",
+            "timeout --signal=TERM --kill-after=1s 1s python workload.py"
+          ],
+          "kind": "run",
+          "exit_code": 124,
+          "timed_out": true
+        }
+      ],
+      "worker_image_tag": "generic-3"
+    }
+  ],
+  "paper_integration_check": {
+    "audit_id": "68236e3a300e",
+    "request_id": "3d96995a5416441588e84bbbff66b403",
+    "worker_image_tag": "generic-1",
     "static_score": 7,
     "dynamic_score": 4,
-    "worker_elapsed_seconds": 13.54,
-    "original_code_cells_completed": 7,
-    "pdf_figures_generated": 9,
-    "result_reproduction": "not_attempted"
+    "worker_elapsed_seconds": 206.49,
+    "code_run_attempts": 3,
+    "code_run_successes": 1,
+    "result_reproduction": "not_attempted",
+    "limitations": "A later analysis lacked an input file. A subsequent archive extraction stopped the sandbox. The later worker revision stops after sandbox loss and directs the planner toward smaller available inputs."
+  },
+  "worker_build_id": "77d442f2-ae4c-4972-a7cd-ec62ccd5eab5",
+  "final_image_smoke": {
+    "case": "shell_example",
+    "request_id": "27f48489631a4733beb13ba04ff2bf14",
+    "passed": true,
+    "elapsed_seconds": 5.21
   }
 }

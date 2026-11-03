@@ -1,4 +1,5 @@
 import json
+import shlex
 
 from .schemas import AuditReport, AuditFinding, PaperManifest, Review, Status
 from .comparison import compare_cached_counts
@@ -81,10 +82,10 @@ def finalize(audit_id: str, review_value) -> tuple[AuditReport, str]:
         summary=(f"The audit inspected {repository.get('file_count', 0)} artifact files and retained {len(findings)} findings with checked source references. "
                  f"It completed independent comparisons for {len(comparisons)} extracted claims using author-provided cached labels. "
                  "The findings below separate deterministic observations from agent interpretations. Full experimental reproduction remains untested."),
-        claim_coverage={"claims_extracted": len(manifest.claims), "claims_numerically_verified": sum(c.matches for c in comparisons), "claims_compared_against_cached_labels": len(comparisons), "fraction_numerically_verified": sum(c.matches for c in comparisons) / len(manifest.claims) if manifest.claims else None, "scope": "Independent checks of stored labels. Original code generation and validation remain untested."},
+        claim_coverage={"claims_extracted": len(manifest.claims), "claims_numerically_verified": sum(c.matches for c in comparisons), "claims_compared_against_cached_labels": len(comparisons), "fraction_numerically_verified": sum(c.matches for c in comparisons) / len(manifest.claims) if manifest.claims else None, "scope": "Independent checks of stored labels. Dynamic execution is reported separately and does not by itself verify a paper claim."},
         cached_result_comparisons=comparisons,
         limitations=[
-            "Dynamic testing covers one selected analysis notebook under a fixed environment. Full model inference and result reproduction remain untested." if execution else "Repository code was not executed. Independent checks of cached labels, when available, do not establish full experimental reproduction.",
+            "Dynamic testing covers the commands recorded below within a five-minute cloud execution budget. A successful command establishes that the selected code ran in this environment. Verifying a paper result requires a separate comparison against that result." if execution else "Repository code was not executed. Independent checks of cached labels, when available, do not establish full experimental reproduction.",
             "Source quotes and evidence IDs were checked mechanically. The reasoning connecting a quote to an interpretation still requires review.",
             "The scoring rubric checks coarse artifact and documentation indicators. It has not been calibrated against expert assessments.",
             "Mathematical verification and comprehensive reference verification remain unimplemented.",
@@ -139,13 +140,10 @@ def render_report(report: AuditReport, evidence: dict) -> str:
         awarded = "Unresolved" if component.awarded is None else f"{component.awarded:g}"
         lines.append(f"| {component.criterion.replace('_', ' ').capitalize()} | {awarded} | {component.maximum:g} | {component.status.value.replace('_', ' ')} |")
     lines.extend(["", dynamic.rationale])
+    for component in dynamic.components:
+        lines.extend(["", f"The {component.criterion.replace('_', ' ')} assessment is: {component.rationale}"])
     for execution in report.executions:
-        lines.extend(["", "### The cloud notebook test recorded this output", "",
-            f"The execution status is {execution['status']}. The elapsed time is {execution.get('elapsed_seconds', 'unknown')} seconds. The job's hard time limit is 120 seconds.",
-            f"The selected notebook is {execution.get('notebook', 'unresolved')}.",
-            execution.get("reason", ""), "",
-            "The following log is untrusted program output.", ""])
-        lines.extend("    " + line for line in execution.get("stdout", "").splitlines()[-80:])
+        lines.extend(render_execution(execution))
     lines.extend(["", "## The static findings require review", ""])
     if not report.findings:
         lines.append("The review produced no findings with source quotes that passed the mechanical evidence check.")
@@ -159,7 +157,8 @@ def render_report(report: AuditReport, evidence: dict) -> str:
             "> " + finding.quote.replace("\n", "\n> "), "",
             "The source quote was verified. " + ("The finding records a deterministic static observation." if finding.basis == "observation" else "The finding is an agent interpretation of that source."), "",
         ])
-    lines.extend(["## The proposed reproduction plan remains unexecuted", ""])
+    lines.extend(["## The static review proposed the following reproduction plan", "",
+                  "The cloud execution record above identifies which commands were actually attempted. This plan records the proposals made before execution.", ""])
     for index, step in enumerate(report.reproduction_plan, 1):
         lines.extend([f"### {index}. {step.target}", "", f"The relevant files are: {', '.join(step.relevant_files)}.", "", f"The prerequisites are: {', '.join(step.prerequisites)}.", "", f"The expected result is: {step.expected_result}", "", f"The supporting evidence IDs are: {', '.join(step.evidence_ids)}.", ""])
         if step.proposed_command:
@@ -170,3 +169,47 @@ def render_report(report: AuditReport, evidence: dict) -> str:
         lines.extend(["", "## The evidence check rejected these items", ""])
         lines.extend(f"- {message}" for message in report.rejected_evidence_references)
     return "\n".join(lines) + "\n"
+
+
+def render_execution(execution: dict) -> list[str]:
+    """Render observed command attempts without treating setup as paper execution."""
+    budget = execution.get("budget_seconds", 300)
+    lines = ["", "### The cloud execution recorded these attempts", "",
+             f"The execution status is {execution.get('status', 'unknown').replace('_', ' ')}. "
+             f"The elapsed time is {execution.get('elapsed_seconds', 'unknown')} seconds. "
+             f"The execution budget is {budget} seconds.", "",
+             "The execution agent's assessment was: " + execution.get("reason", "No assessment was recorded.")]
+    if execution.get("timed_out"):
+        lines.extend(["", "The execution reached its time limit. The record below distinguishes completed commands from interrupted commands."])
+    attempts = execution.get("attempts", [])
+    if attempts:
+        lines.extend(["", "The agent chose these commands for the supplied repository. Setup commands install or prepare dependencies. Probe commands inspect the environment. Setup and probe success alone do not establish that the paper's code ran."])
+    else:
+        lines.extend(["", "The execution record contains no individual command attempts."])
+    for index, attempt in enumerate(attempts, 1):
+        kind = attempt.get("kind", "run")
+        exit_code = attempt.get("exit_code")
+        outcome = "timed out" if attempt.get("timed_out") else (
+            "completed successfully" if exit_code == 0 else
+            f"failed with exit code {exit_code}" if exit_code is not None else "did not complete")
+        argv = attempt.get("argv", [])
+        command = shlex.join(str(arg) for arg in argv) if isinstance(argv, list) else str(argv)
+        lines.extend(["", f"#### Attempt {index}: {kind}", "",
+                      f"The purpose was: {attempt.get('purpose', 'No purpose was recorded.')}", "",
+                      f"The working directory was `{attempt.get('working_directory', '.')}`.", "",
+                      "The agent attempted this command:", ""])
+        lines.extend("    " + line for line in command.splitlines())
+        lines.extend(["", f"The command {outcome}. It ran for {attempt.get('elapsed_seconds', 'unknown')} seconds."])
+        if attempt.get("reason"):
+            lines.extend(["", str(attempt["reason"])])
+        output = attempt.get("stdout_tail", attempt.get("stdout", ""))
+        if output:
+            lines.extend(["", "The captured output below is untrusted program output.", ""])
+            lines.extend("    " + line for line in str(output).splitlines())
+        else:
+            lines.extend(["", "The command produced no captured output."])
+    # Preserve logs from older saved reports while giving all new attempts their own records.
+    if not attempts and execution.get("stdout"):
+        lines.extend(["", "The captured output below is untrusted program output.", ""])
+        lines.extend("    " + line for line in str(execution["stdout"]).splitlines())
+    return lines

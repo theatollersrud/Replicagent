@@ -143,10 +143,24 @@ class DynamicTest(BaseAgent):
             return
         from .dynamic import run_dynamic
         audit_id = ctx.session.state["audit_id"]
-        set_stage(audit_id, "Running a two-minute notebook test in Google Cloud")
-        yield progress(self.name, "I am sending the inspected package to an isolated Google Cloud job. The job has a hard two-minute time limit. I will try its analysis notebook and record the output.")
-        result = await asyncio.to_thread(run_dynamic, audit_id)
-        yield progress(self.name, f"The cloud test finished with status {result['status']}. {result['reason']}", {"dynamic_execution": result})
+        set_stage(audit_id, "Trying the paper's code in Google Cloud")
+        yield progress(self.name, "I am sending this paper's code package to an isolated Google Cloud job. The execution agent has five minutes to inspect the package, choose commands, install dependencies, and try running the code. I will show the commands and what happened.")
+        updates = asyncio.Queue()
+        loop = asyncio.get_running_loop()
+        def on_progress(message):
+            loop.call_soon_threadsafe(updates.put_nowait, message)
+        task = asyncio.create_task(asyncio.to_thread(
+            run_dynamic, audit_id, ctx.session.state.get("review"), on_progress))
+        while not task.done():
+            try:
+                message = await asyncio.wait_for(updates.get(), timeout=5)
+                yield progress(self.name, message)
+            except asyncio.TimeoutError:
+                pass
+        while not updates.empty():
+            yield progress(self.name, updates.get_nowait())
+        result = await task
+        yield progress(self.name, f"The cloud test finished with status {result['status']}. The execution agent's assessment was: {result['reason']}", {"dynamic_execution": result})
 
 
 class GenerateReport(BaseAgent):
@@ -172,7 +186,7 @@ review = AuditLlmAgent(
     generate_content_config=types.GenerateContentConfig(temperature=0.1),
 )
 report = GenerateReport(name="VerifyAndScore", description="Evidence references are checked, the score is calculated, and reports are saved.")
-dynamic = DynamicTest(name="DynamicTest", description="A selected original analysis notebook runs in a cloud sandbox for at most two minutes.")
+dynamic = DynamicTest(name="DynamicTest", description="An execution agent chooses and attempts this paper's repository code in Google Cloud within five minutes.")
 
 root_agent = Workflow(
     name="Replicagent",

@@ -1,6 +1,10 @@
 steps:
   - name: gcr.io/cloud-builders/docker
-    args: ['build', '-f', 'Dockerfile.dynamic-worker', '-t', '${_IMAGE}', '.']
+    args: ['pull', '${_CACHE_IMAGE}']
+  - name: gcr.io/cloud-builders/docker
+    args: ['build', '--cache-from', '${_CACHE_IMAGE}', '-f', 'Dockerfile.dynamic-worker', '-t', '${_IMAGE}', '.']
 images: ['${_IMAGE}']
+substitutions:
+  _CACHE_IMAGE: europe-west4-docker.pkg.dev/agentic-oslo-team-12-9afd/replicagent/dynamic-worker:prototype-2
 options:
   logging: CLOUD_LOGGING_ONLY
