@@ -1,0 +1,16 @@
+{
+  "schema_version": "1.0",
+  "no_code_cap": 1.0,
+  "weights": {
+    "implementation": 1.5,
+    "stored_results": 0.5,
+    "readme": 0.5,
+    "installation_command": 0.5,
+    "evaluation_command": 0.5,
+    "experiment_configuration": 0.5,
+    "dependency_manifest": 0.5,
+    "version_constraints": 0.5,
+    "execution": 2.0,
+    "result_reproduction": 3.0
+  }
+}

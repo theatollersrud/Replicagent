@@ -1,0 +1,11 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.adk/
+audits/
+inputs/
+*.egg-info/
+demo-server.log
+audits-*-run.log
