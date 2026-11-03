@@ -156,5 +156,14 @@
       "skipped": 2
     },
     "result_reproduction": "not_attempted"
+  },
+  "runtime_automated_checks_passed": 96,
+  "concise_report_validation": {
+    "session_id": "6000129785651527680",
+    "request_id": "eeb745ed3ad043a7a6d2636a3b0112e3",
+    "original_report_characters": 129888,
+    "revised_report_characters": 8571,
+    "dynamic_summary_words": 55,
+    "revised_report_object": "dynamic/eeb745ed3ad043a7a6d2636a3b0112e3/report-concise.md"
   }
 }

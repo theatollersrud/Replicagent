@@ -67,7 +67,10 @@ def calculate_dynamic_score(execution: dict | None = None, policy: dict | None =
             criterion=criterion, maximum=maximum,
             awarded=round(maximum * fraction, 2) if assessed else None,
             status=Status(result["status"]) if assessed else (Status.BLOCKED if execution.get("status") == "blocked" else Status.NOT_ATTEMPTED),
-            rationale=result["rationale"] if assessed else execution.get("reason", "This dynamic criterion has not been tested."),
+            rationale=result["rationale"] if assessed else (
+                "The paper's numerical results have not been independently verified."
+                if criterion == "result_reproduction" else "Repository execution has not been assessed."
+            ),
             evidence_ids=result.get("evidence_ids", []) if assessed else [],
         ))
     assessed = sum(c.awarded is not None for c in components)

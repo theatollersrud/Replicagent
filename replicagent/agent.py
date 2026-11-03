@@ -160,7 +160,7 @@ class DynamicTest(BaseAgent):
         while not updates.empty():
             yield progress(self.name, updates.get_nowait())
         result = await task
-        yield progress(self.name, f"The cloud test finished with status {result['status']}. The execution agent's assessment was: {result['reason']}", {"dynamic_execution": result})
+        yield progress(self.name, f"The cloud test finished with status {result['status'].replace('_', ' ')}. I am preparing a short summary of the observed results.", {"dynamic_execution": result})
 
 
 class GenerateReport(BaseAgent):
