@@ -99,10 +99,11 @@ class ResultComparison(BaseModel):
 
 
 class ScoreBreakdown(BaseModel):
-    score: float
+    score: float | None
     possible_after_untested_checks: float
     maximum: float = 10.0
     provisional: bool = True
+    status: Status = Status.PARTIAL
     criteria_assessed: int
     criteria_total: int
     components: list[ScoreComponent]
@@ -116,14 +117,15 @@ class AuditRequest(BaseModel):
 
 
 class AuditReport(BaseModel):
-    schema_version: str = "1.0"
+    schema_version: str = "2.0"
     audit_id: str
     state: str
     paper: PaperManifest
     repository: dict
     findings: list[AuditFinding]
     reproduction_plan: list[PlanStep]
-    score: ScoreBreakdown
+    static_score: ScoreBreakdown
+    dynamic_score: ScoreBreakdown
     dynamic_status: Status = Status.NOT_ATTEMPTED
     scientific_correctness_status: Status = Status.NOT_ATTEMPTED
     reference_verification_status: Status = Status.NOT_ATTEMPTED

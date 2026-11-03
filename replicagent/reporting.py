@@ -2,7 +2,7 @@ import json
 
 from .schemas import AuditReport, AuditFinding, PaperManifest, Review
 from .comparison import compare_cached_counts
-from .scoring import calculate_score
+from .scoring import calculate_static_score, calculate_dynamic_score
 from .storage import EvidenceLedger, read, save, verify_quote
 
 
@@ -71,7 +71,7 @@ def finalize(audit_id: str, review_value) -> tuple[AuditReport, str]:
     report = AuditReport(
         audit_id=audit_id, state="completed_static_audit", paper=manifest,
         repository=repository_summary, findings=findings, reproduction_plan=plan,
-        score=calculate_score(repository),
+        static_score=calculate_static_score(repository), dynamic_score=calculate_dynamic_score(),
         summary=(f"The audit inspected {repository.get('file_count', 0)} artifact files and retained {len(findings)} findings with checked source references. "
                  f"It completed independent comparisons for {len(comparisons)} extracted claims using author-provided cached labels. "
                  "The findings below separate deterministic observations from agent interpretations. Full experimental reproduction remains untested."),
@@ -98,13 +98,16 @@ def finalize(audit_id: str, review_value) -> tuple[AuditReport, str]:
 
 
 def render_report(report: AuditReport, evidence: dict) -> str:
-    score = report.score
+    score = report.static_score
+    dynamic = report.dynamic_score
+    static_text = f"{score.score:g}/10" if score.score is not None else "Not assessed"
+    dynamic_text = f"{dynamic.score:g}/10" if dynamic.score is not None else "Not assessed"
     lines = [
         f"# Reproducibility audit: {report.paper.title}", "",
-        f"**The provisional score is {score.score:g}/10.** Untested checks could raise it to {score.possible_after_untested_checks:g}/10 under the current demo rubric.", "",
-        "The score reflects static checks completed so far. Execution and full experimental reproduction remain untested.", "",
+        f"**The static score is {static_text}.** **The dynamic score is {dynamic_text}.**", "",
+        "Each assessment uses its own 0–10 scale. Both assessments report their coverage separately. Unattempted execution receives an unassessed dynamic score.", "",
         report.summary, "",
-        f"The audit assessed {score.criteria_assessed} of {score.criteria_total} scoring criteria. Independent cached-label checks matched {report.claim_coverage['claims_numerically_verified']} of {len(report.paper.claims)} extracted claims.", "",
+        f"The audit assessed {score.criteria_assessed} of {score.criteria_total} static criteria and {dynamic.criteria_assessed} of {dynamic.criteria_total} dynamic criteria. Independent cached-label checks matched {report.claim_coverage['claims_numerically_verified']} of {len(report.paper.claims)} extracted claims.", "",
         f"The audit ID is `{report.audit_id}`.",
         f"The package source is {report.repository.get('source') or 'unresolved'}.",
         f"The audited package revision is `{report.repository.get('revision') or 'unresolved'}`.",
@@ -120,11 +123,15 @@ def render_report(report: AuditReport, evidence: dict) -> str:
         for comparison in report.cached_result_comparisons:
             lines.append(f"| {comparison.claim_id} | {comparison.benchmark} | {comparison.reported_value:g} | {comparison.observed_value} | {'Matches' if comparison.matches else 'Differs'} | {comparison.evidence_id} |")
         lines.extend(["", "These independent checks do not award points for executing the authors' code or reproducing the full experiment."])
-    lines.extend(["", "## The score follows a deterministic demo rubric", "", "| Criterion | Awarded | Maximum | Status |", "|---|---:|---:|---|"])
+    lines.extend(["", "## The static score follows a deterministic demo rubric", "", "| Criterion | Awarded | Maximum | Status |", "|---|---:|---:|---|"])
     for component in score.components:
         awarded = "Unresolved" if component.awarded is None else f"{component.awarded:g}"
         lines.append(f"| {component.criterion.replace('_', ' ').capitalize()} | {awarded} | {component.maximum:g} | {component.status.value.replace('_', ' ')} |")
-    lines.extend(["", score.rationale, "", "## The static findings require review", ""])
+    lines.extend(["", score.rationale, "", "## The dynamic score records execution coverage", "", "| Criterion | Awarded | Maximum | Status |", "|---|---:|---:|---|"])
+    for component in dynamic.components:
+        awarded = "Unresolved" if component.awarded is None else f"{component.awarded:g}"
+        lines.append(f"| {component.criterion.replace('_', ' ').capitalize()} | {awarded} | {component.maximum:g} | {component.status.value.replace('_', ' ')} |")
+    lines.extend(["", dynamic.rationale, "", "## The static findings require review", ""])
     if not report.findings:
         lines.append("The review produced no findings with source quotes that passed the mechanical evidence check.")
     for index, finding in enumerate(report.findings, 1):

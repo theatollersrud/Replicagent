@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from replicagent import storage
 from replicagent.app import app
-from replicagent.scoring import calculate_score
+from replicagent.scoring import calculate_static_score, calculate_dynamic_score
 from replicagent.services import inspect_archive, paper_url, public_url
 from replicagent.storage import EvidenceLedger, verify_quote
 
@@ -18,30 +18,49 @@ def isolate_storage(tmp_path, monkeypatch):
     monkeypatch.setattr("replicagent.app.AUDITS", tmp_path / "audits")
 
 
-def test_untested_execution_retains_unresolved_points():
-    score = calculate_score({"status": "inspected", "facts": {"implementation": True}})
-    assert score.score == 1.5
+def test_static_and_dynamic_scores_are_separate():
+    score = calculate_static_score({"status": "inspected", "facts": {"implementation": True}})
+    assert score.score == 3
     assert score.possible_after_untested_checks == 10
-    execution = next(c for c in score.components if c.criterion == "execution")
+    dynamic = calculate_dynamic_score()
+    assert dynamic.score is None
+    assert dynamic.criteria_assessed == 0
+    assert all(c.criterion != "execution" for c in score.components)
+    execution = next(c for c in dynamic.components if c.criterion == "execution")
     assert execution.awarded is None
     assert execution.status == "not_attempted"
 
 
 def test_blocked_discovery_does_not_imply_missing_code():
-    score = calculate_score({"status": "blocked", "facts": {}})
+    score = calculate_static_score({"status": "blocked", "facts": {}})
+    assert score.score is None
     assert score.possible_after_untested_checks == 10
     assert score.criteria_assessed == 0
 
 
 def test_inspected_package_without_code_gets_provisional_cap():
-    score = calculate_score({"status": "inspected", "facts": {"implementation": False, "readme": True, "stored_results": True}})
+    score = calculate_static_score({"status": "inspected", "facts": {"implementation": False, "readme": True, "stored_results": True}})
     assert score.score == 1
     assert score.possible_after_untested_checks == 1
 
 
 def test_invalid_policy_rejected():
     with pytest.raises(ValueError):
-        calculate_score({}, {"weights": {"execution": 12}, "no_code_cap": 1})
+        calculate_static_score({}, {"static_weights": {"execution": 12}, "no_code_cap": 1})
+
+
+def test_dynamic_smoke_success_leaves_result_reproduction_unresolved():
+    score = calculate_dynamic_score({"status": "partially_verified", "criteria": {"execution": {"fraction": 1.0, "status": "verified", "rationale": "The smoke test passed."}}})
+    assert score.score == 4.0
+    assert score.possible_after_untested_checks == 10.0
+    assert score.criteria_assessed == 1
+    assert score.components[1].awarded is None
+
+
+def test_failed_dynamic_execution_does_not_change_static_score():
+    score = calculate_dynamic_score({"status": "failed", "criteria": {"execution": {"fraction": 0.0, "status": "failed", "rationale": "The attempted smoke test failed."}}})
+    assert score.score == 0.0
+    assert calculate_static_score({"status": "inspected", "facts": {"implementation": True}}).score == 3.0
 
 
 def test_ledger_appends_and_rejects_fabricated_quotes():
@@ -101,7 +120,10 @@ def test_offline_api_lifecycle():
     assert report["paper"]["title"] == "Synthetic offline audit fixture"
     assert report["dynamic_status"] == "not_attempted"
     assert report["claim_coverage"]["claims_numerically_verified"] == 0
-    assert client.get(f"/audits/{audit_id}/score").json()["provisional"]
+    scores = client.get(f"/audits/{audit_id}/score").json()
+    assert scores["static_score"]["provisional"]
+    assert scores["dynamic_score"]["score"] is None
+    assert "score" not in report
     assert client.get(f"/audits/{audit_id}/report?format=markdown").status_code == 200
     assert client.get(f"/audits/{audit_id}/executions").json()["executions"] == []
 

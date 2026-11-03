@@ -23,7 +23,7 @@ The workflow has five visible stages. It normally makes two Gemini calls.
 2. `UnderstandPaper` extracts empirical claims using Gemini and a typed output schema.
 3. `InspectArtifacts` discovers the replication package and inspects source files without executing them.
 4. `ReviewEvidence` interprets the evidence and proposes reproduction steps using Gemini.
-5. `VerifyAndScore` checks source quotes, independently counts supported cached results, calculates the score, and saves the final report.
+5. `VerifyAndScore` checks source quotes, independently counts supported cached results, calculates separate static and dynamic scores, and saves the final report.
 
 The supplied paper links to an anonymized Figshare package. The discovery fallback searches Zenodo by title and requires metadata containing the exact arXiv identifier. It can find the later public package at https://zenodo.org/records/19564925. The report records that this package may differ from the paper's original package.
 
@@ -55,9 +55,9 @@ audits/<audit_id>/
 
 The evidence ledger is append-only. It records source locations, observations, hashes, methods, and timestamps. Reports cite evidence IDs and short quotes. The evidence check verifies that the quotes occur in the stored source observations. An agent's interpretation of a quote still requires review.
 
-The deterministic score uses the weights in `configs/scoring.json`. The score reports points awarded so far, the maximum possible after unresolved checks, and the number of criteria assessed. A missed static indicator means that the indicator was not detected in the inspected package. It does not establish that the paper is impossible to reproduce. The rubric is a coarse demonstration policy that needs expert calibration.
+The static and dynamic assessments each have their own 0–10 score and weights in `configs/scoring.json`. The static score covers code, stored artifacts, documentation, configuration, and environment indicators. The dynamic score covers execution and reproduction of reported results. Each assessment reports its own coverage and unresolved points. The report has no combined score. A missed static indicator means that the indicator was not detected in the inspected package. The rubric is a coarse demonstration policy that needs expert calibration.
 
-Execution and full experimental reproduction retain unresolved points. The report explicitly records them as untested. Mathematical correctness and reference verification are also untested.
+On `main`, dynamic execution is unattempted and the dynamic score is displayed as **Not assessed**, with JSON value `null`. This preserves the distinction between an unattempted test and a demonstrated failure. Mathematical correctness and reference verification are also untested.
 
 For the supplied replication package, the report can independently count the union of solved problems across all models from the authors' cached CSV labels. It can compare those counts with extracted theoretical-maximum claims. It reads the LiveCodeBench date filter from the authors' analysis notebook through Python's source parser and applies that filter to the benchmark metadata. It does not execute the notebook. These checks test consistency with stored labels and do not independently establish that the generated programs pass their tests.
 
@@ -121,6 +121,8 @@ GET  /audits/{audit_id}/score
 GET  /audits/{audit_id}/report
 GET  /audits/{audit_id}/report?format=markdown
 ```
+
+The `/score` endpoint returns `static_score` and `dynamic_score`, each with its own breakdown. New JSON reports use schema version `2.0`.
 
 Submit `{"paper_source":"https://arxiv.org/abs/2510.21513v2"}` for a live audit. Submit `{"mock":true}` for the explicitly labelled synthetic offline workflow. `POST /audits` returns an audit ID immediately. Progress and partial results become available as stages finish. The API uses an in-process background task and does not resume interrupted jobs.
 

@@ -70,7 +70,8 @@ def executions(audit_id: str):
 
 @app.get("/audits/{audit_id}/score")
 def score(audit_id: str):
-    return load(audit_id, "report.json")["score"]
+    report = load(audit_id, "report.json")
+    return {"static_score": report["static_score"], "dynamic_score": report["dynamic_score"]}
 
 
 @app.get("/audits/{audit_id}/report")

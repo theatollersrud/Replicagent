@@ -1,16 +1,18 @@
 {
-  "schema_version": "1.0",
+  "schema_version": "2.0",
   "no_code_cap": 1.0,
-  "weights": {
-    "implementation": 1.5,
-    "stored_results": 0.5,
-    "readme": 0.5,
-    "installation_command": 0.5,
-    "evaluation_command": 0.5,
-    "experiment_configuration": 0.5,
-    "dependency_manifest": 0.5,
-    "version_constraints": 0.5,
-    "execution": 2.0,
-    "result_reproduction": 3.0
+  "static_weights": {
+    "implementation": 3.0,
+    "stored_results": 1.0,
+    "readme": 1.0,
+    "installation_command": 1.0,
+    "evaluation_command": 1.0,
+    "experiment_configuration": 1.0,
+    "dependency_manifest": 1.0,
+    "version_constraints": 1.0
+  },
+  "dynamic_weights": {
+    "execution": 4.0,
+    "result_reproduction": 6.0
   }
 }
