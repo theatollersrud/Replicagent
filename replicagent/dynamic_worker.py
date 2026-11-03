@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 import threading
 import time
+import uuid
 import zipfile
 from pathlib import Path, PurePosixPath
 
@@ -20,6 +21,27 @@ BUDGET_SECONDS = 300
 SAVE_RESERVE_SECONDS = 15
 SANDBOX = "/usr/local/gcp/bin/sandbox"
 LOG_TAIL_BYTES = 64_000
+
+
+def write_execution_record(workspace, context, extraction, attempts):
+    """Replace the sandbox's evidence copy without following sandbox-created links."""
+    directory = workspace / ".replicagent-audit"
+    directory.mkdir(exist_ok=True)
+    directory_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    temporary = ".context-" + uuid.uuid4().hex
+    try:
+        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                             0o644, dir_fd=directory_fd)
+        with os.fdopen(descriptor, "w") as output:
+            json.dump({"context": context, "extraction": extraction, "attempts": attempts},
+                      output, ensure_ascii=False)
+        os.replace(temporary, "context.json", src_dir_fd=directory_fd, dst_dir_fd=directory_fd)
+    finally:
+        try:
+            os.unlink(temporary, dir_fd=directory_fd)
+        except FileNotFoundError:
+            pass
+        os.close(directory_fd)
 
 
 def child_exit_code(supervisor_exit_code, output):
@@ -184,6 +206,10 @@ def execute_repository(workspace, name, context, extraction, deadline, publish=N
                 # A progress-write failure must not discard execution evidence.
                 pass
 
+    # Full evidence remains available for targeted reads. Only a selected view
+    # is sent to the language model, so large repositories remain executable.
+    write_execution_record(workspace, context, extraction, attempts)
+
     try:
         startup = runner(sandbox_start_command(workspace, name, allow_egress), min(15, max(0.1, deadline - time.monotonic())))
         if startup["exit_code"] != 0:
@@ -222,6 +248,11 @@ def execute_repository(workspace, name, context, extraction, deadline, publish=N
             except Exception as exc:
                 attempt.update({"exit_code": None, "timed_out": False, "elapsed_seconds": 0, "stdout_tail": f"Command launch failed: {type(exc).__name__}: {exc}"})
             attempts.append(attempt)
+            try:
+                write_execution_record(workspace, context, extraction, attempts)
+            except OSError:
+                # A modified sandbox copy cannot discard host-side observations.
+                pass
             outcome = "timed out" if attempt["timed_out"] else f"exited with code {attempt['exit_code']}"
             update({"message": f"The command {outcome}. I am assessing the output and remaining time.", "attempts": attempts, "remaining_seconds": round(max(0, deadline - time.monotonic()), 1)})
             if attempt.get("exit_code") != 0 and (

@@ -5,8 +5,8 @@
   "job_name": "replicagent-dynamic",
   "task_timeout_seconds": 300,
   "max_retries": 0,
-  "worker_image": "europe-west4-docker.pkg.dev/agentic-oslo-team-12-9afd/replicagent/dynamic-worker:generic-4",
-  "automated_checks_passed": 84,
+  "worker_image": "europe-west4-docker.pkg.dev/agentic-oslo-team-12-9afd/replicagent/dynamic-worker:context-fix-1",
+  "automated_checks_passed": 91,
   "live_cloud_checks": [
     {
       "case": "shell_example",
@@ -135,11 +135,26 @@
     "result_reproduction": "not_attempted",
     "limitations": "A later analysis lacked an input file. A subsequent archive extraction stopped the sandbox. The later worker revision stops after sandbox loss and directs the planner toward smaller available inputs."
   },
-  "worker_build_id": "77d442f2-ae4c-4972-a7cd-ec62ccd5eab5",
+  "worker_build_id": "f70ffff3-cffc-445a-8618-38ceb3f4a846",
   "final_image_smoke": {
     "case": "shell_example",
     "request_id": "27f48489631a4733beb13ba04ff2bf14",
     "passed": true,
     "elapsed_seconds": 5.21
+  },
+  "context_overflow_fix": {
+    "failed_request_id": "7db89f81c4d24fddabc584a809fd6f93",
+    "replay_request_id": "115e5d2bad3d4a1c8087c75f142fb2c2",
+    "repository_files": 6480,
+    "first_planner_input_bytes_after_fix": 68028,
+    "replay_status": "partially_verified",
+    "replay_elapsed_seconds": 260.39,
+    "command_attempts": 19,
+    "test_suite_observation": {
+      "passed": 629,
+      "failed": 1,
+      "skipped": 2
+    },
+    "result_reproduction": "not_attempted"
   }
 }
