@@ -17,17 +17,16 @@ Open http://localhost:8000 and select **replicagent** in the application selecto
 Audit https://arxiv.org/abs/2510.21513v2
 ```
 
-On this branch the workflow has nine visible stages and normally makes four Gemini calls. The first five are the static audit from `main`.
+On this branch the workflow has eight visible stages and normally makes five to seven Gemini calls. The first five are the static audit from `main`.
 
 1. `IngestPaper` reads the paper and records its source evidence. For arXiv papers it downloads the LaTeX source first and falls back to PDF text extraction only when arXiv offers no source.
 2. `UnderstandPaper` extracts empirical claims using Gemini and a typed output schema.
 3. `InspectArtifacts` discovers the replication package and inspects source files without executing them.
 4. `ReviewEvidence` interprets the evidence and proposes reproduction steps using Gemini.
 5. `DynamicAnalysis` collects the compile check, data inventory, analysis script runs, and reference lookups. These start in the background as soon as static inspection finishes, so they overlap with the `ReviewEvidence` model call.
-6. `GenerateChecks` asks Gemini to write small pandas scripts that recompute verified claims from the stored data.
-7. `RunChecks` runs those scripts in parallel and compares each `RESULT=` line with the paper's value.
-8. `AssessCorrectness` asks Gemini whether the code implements what the paper says, lists problems with severity, and judges whether cited sentences match the reference titles.
-9. `VerifyAndScore` checks source quotes, independently counts supported cached results, calculates the static, dynamic, and aggregated scores, and saves the final report.
+6. `DeepChecks` runs two things concurrently. A metric trace asks Gemini to pair every metric, selection strategy, filter, model panel, and aggregation defined in the paper with the code that implements it and to judge whether they agree. An iterative check loop asks Gemini for scripts that recompute verified claims (or sweep a whole table) and scripts that test the stored data for consistency, runs them in parallel, and sends failures back for revision. The loop has hard limits: 3 rounds, 480 seconds for the stage, 150 seconds of script time per claim, and 60 seconds per script. A claim the model gives up on, or that exhausts its budget, is reported as abandoned.
+7. `AssessCorrectness` asks Gemini whether the code implements what the paper says, confirms or rejects the metric-trace discrepancies and consistency findings against the full analysis code, lists problems with severity, and judges whether cited sentences match the reference titles.
+8. `VerifyAndScore` checks source quotes, independently counts supported cached results, calculates the static, dynamic, and aggregated scores, and saves the final report.
 
 Pass `--static-only` to the terminal runner to stop after the static audit.
 
@@ -75,7 +74,11 @@ Repository code runs with the audit's own interpreter and no isolation. This bra
 
 Reference checking parses `\bibitem` entries from the inlined `.bbl`. DOIs are resolved on Crossref, arXiv identifiers (including `10.48550/arXiv.` DOIs) on the arXiv API, and remaining entries are searched on Crossref by title. Lookups run three at a time with a 60 second budget and are never retried. The first failure, including a `429 Too Many Requests` response, stops the remaining lookups, and the report states that reference checking is not fully completed. A lookup miss is reported as a problem, not as proof of a fabricated reference.
 
-The correctness review is a single Gemini call over the paper source, the code excerpts, the dynamic observations, the generated check results, and the reference results. Every problem must quote an evidence record, and quotes are checked mechanically. Parse failures, failed script runs, unresolved references, and mismatched generated checks are added as deterministic problems before the model's interpretations. The aggregated score starts at 10 and subtracts 3 per critical, 2 per high, 1 per medium, and 0.5 per low problem. It is a provisional triage number.
+The dynamic stage also collects the full text of every analysis, metric, and script file (notebooks reduced to code cells, up to 80,000 characters per file and 400,000 in total) and records each as an evidence record, so the metric trace and the correctness review read whole files rather than the 12,000 character excerpts of the static stage.
+
+The consistency checks ask for four kinds of script: joins of the same candidates across file formats on their keys, counts of missing or skipped scores per scorer and generator, the set of models the code actually sums or selects over compared with the paper's subset, and the columns a name pattern in the code actually matches. Their outputs are judged by the model in the revision round and, when confirmed, become problems that cite the script's evidence record.
+
+The correctness review is a single Gemini call over the paper source, the full analysis code, the metric trace, the check results and consistency assessments, the dynamic observations, and the reference results. Every problem must quote an evidence record, and quotes are checked mechanically. Parse failures, failed script runs, unresolved references, and mismatched generated checks are added as deterministic problems before the model's interpretations. The aggregated score starts at 10 and subtracts 3 per critical, 2 per high, 1 per medium, and 0.5 per low problem. It is a provisional triage number.
 
 The dynamic score keeps its two criteria. Execution averages whether the package parses, whether stored data exist, and the fraction of analysis scripts that ran. Result reproduction is the fraction of cached-label comparisons and generated checks that matched the paper.
 

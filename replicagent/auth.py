@@ -48,3 +48,23 @@ def model():
         },
         retry_options=types.HttpRetryOptions(attempts=3, initial_delay=2, max_delay=10),
     )
+
+
+def generate_structured(prompt: str, schema, temperature: float = 0.1):
+    """One synchronous structured-output call outside ADK, for stages that loop."""
+    from google import genai
+    client = genai.Client(
+        vertexai=True,
+        project=os.getenv("GOOGLE_CLOUD_PROJECT", "agentic-oslo-team-12-9afd"),
+        location=os.getenv("GOOGLE_CLOUD_LOCATION", "global"),
+        credentials=local_credentials(),
+    )
+    response = client.models.generate_content(
+        model=os.getenv("AUDITOR_MODEL", "gemini-3.5-flash"),
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            temperature=temperature, response_mime_type="application/json", response_schema=schema,
+            http_options=types.HttpOptions(retry_options=types.HttpRetryOptions(attempts=3, initial_delay=2, max_delay=10)),
+        ),
+    )
+    return schema.model_validate_json(response.text)

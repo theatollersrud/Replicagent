@@ -20,7 +20,7 @@ from pathlib import Path, PurePosixPath
 from .storage import EvidenceLedger, ROOT
 
 SCRIPT_TIMEOUT = 180
-CHECK_TIMEOUT = 90
+CHECK_TIMEOUT = 60
 PARALLEL_RUNS = 4
 MAX_SCRIPTS = 6
 DATA_SUFFIXES = {".csv", ".tsv", ".json", ".jsonl", ".parquet", ".pkl", ".pickle", ".npy", ".npz", ".xlsx", ".h5", ".hdf5", ".feather", ".arrow"}
@@ -125,7 +125,7 @@ def data_inventory(root: Path) -> dict:
                                     values[name].add(cell[:60])
                                     if len(values[name]) > 40:
                                         del values[name]
-                entry.update(columns=",".join(header)[:400], sample_row=",".join(sample or [])[:400], rows=rows,
+                entry.update(columns=",".join(header)[:3000], sample_row=",".join(sample or [])[:400], rows=rows,
                              column_values={name: sorted(cells) for name, cells in values.items() if cells})
             except OSError:
                 pass
@@ -152,6 +152,34 @@ def find_analysis_scripts(root: Path) -> list[Path]:
             candidates.append(path)
     candidates.sort(key=lambda p: (0 if p.suffix == ".ipynb" else 1, len(str(p))))
     return candidates[:MAX_SCRIPTS]
+
+
+SOURCE_BUDGET = 400_000
+SOURCE_FILE_LIMIT = 80_000
+
+
+def analysis_sources(root: Path) -> list[dict]:
+    """Return the full text of analysis and metric code, notebooks reduced to their code cells, within a character budget."""
+    candidates = []
+    for path in sorted(p for p in root.rglob("*") if p.is_file() and p.suffix.lower() in {".py", ".ipynb", ".sh", ".r", ".jl"} and not _audit_artifact(p)):
+        relative = str(path.relative_to(root)).casefold()
+        if ".ipynb_checkpoints" in relative or path.stat().st_size > 5_000_000:
+            continue
+        rank = 0 if any(h in relative for h in ("analysis", "metric", "entropy", "score", "select", "confidence")) else 1 if any(h in relative for h in ANALYSIS_HINTS) else 2
+        candidates.append((rank, len(relative), path))
+    sources, used = [], 0
+    for _, _, path in sorted(candidates, key=lambda item: item[:2]):
+        raw = path.read_text(encoding="utf-8", errors="replace")
+        text = notebook_code(raw) if path.suffix == ".ipynb" else raw
+        if path.suffix == ".ipynb" and not text.strip():
+            continue
+        truncated = len(text) > SOURCE_FILE_LIMIT
+        text = text[:SOURCE_FILE_LIMIT]
+        if used + len(text) > SOURCE_BUDGET:
+            break
+        used += len(text)
+        sources.append({"file": str(path.relative_to(root)), "text": text, "truncated": truncated, "lines": text.count("\n") + 1})
+    return sources
 
 
 def _snapshot(root: Path) -> dict[str, int]:
@@ -215,13 +243,35 @@ def run_generated_check(root: Path, check: dict) -> dict:
     values = re.findall(r"^RESULT\s*=\s*(.+?)\s*$", result["stdout"], re.M)
     computed = values[-1] if values else None
     expected = str(check.get("expected_value", "")).strip()
-    matches = None
-    if computed is not None and expected:
-        try:
-            matches = abs(float(computed) - float(expected)) <= max(1e-6, 0.005 * abs(float(expected)))
-        except ValueError:
-            matches = " ".join(computed.split()).casefold() == " ".join(expected.split()).casefold()
-    return {"claim_id": check["claim_id"], "description": check.get("description", ""), "expected_value": expected, "computed_value": computed, "matches": matches, "script_path": str(script.relative_to(root)), **result}
+    kind = check.get("kind", "claim")
+    matches, cells = None, None
+    if kind == "claim" and computed is not None and expected and computed.strip().upper() != "UNRESOLVED":
+        matches, cells = compare_values(computed, expected)
+    return {"claim_id": check["claim_id"], "kind": kind, "description": check.get("description", ""), "expected_value": expected, "computed_value": computed,
+            "matches": matches, "cell_matches": cells, "script": check["script"], "script_path": str(script.relative_to(root)), **result}
+
+
+def _close(left, right) -> bool:
+    """Integers must match exactly; decimals may differ by 0.5 percent to absorb rounding in the paper."""
+    try:
+        l, r = float(left), float(right)
+    except (TypeError, ValueError):
+        return " ".join(str(left).split()).casefold() == " ".join(str(right).split()).casefold()
+    if "." not in str(right).strip() and "." not in str(left).strip():
+        return l == r
+    return abs(l - r) <= max(1e-6, 0.005 * abs(r))
+
+
+def compare_values(computed: str, expected: str):
+    """Compare a single value, or two JSON objects cell by cell for a table sweep."""
+    try:
+        left, right = json.loads(computed), json.loads(expected)
+    except ValueError:
+        left = right = None
+    if isinstance(left, dict) and isinstance(right, dict):
+        cells = {key: (key in left and _close(left[key], value)) for key, value in right.items()}
+        return all(cells.values()) and bool(cells), cells
+    return _close(computed, expected), None
 
 
 def run_dynamic_analysis(audit_id: str, repository: dict) -> dict:
@@ -240,6 +290,10 @@ def run_dynamic_analysis(audit_id: str, repository: dict) -> dict:
         run_futures = [pool.submit(run_script, root, path) for path in scripts]
         compiled, data = compile_future.result(), data_future.result()
         runs = [future.result() for future in run_futures]
+    sources = analysis_sources(root)
+    for item in sources:
+        record = ledger.add("analysis_source", source, f"{revision}, {item['file']}, lines 1-{item['lines']}", item["text"], "Read the complete source text from the extracted package; notebooks reduced to their code cells." + (" The file was truncated to the per-file limit." if item["truncated"] else ""))
+        item["evidence_id"] = record.evidence_id
     compile_record = ledger.add("dynamic_compile", source, revision, json.dumps(compiled, ensure_ascii=False, sort_keys=True), "Parsed every Python file and notebook with the audit interpreter's AST and probed third-party imports. Nothing was executed.")
     data_record = ledger.add("data_inventory", source, revision, json.dumps({k: v for k, v in data.items() if k != "files"} | {"files": data["files"][:120]}, ensure_ascii=False, sort_keys=True), "Listed data files by extension and counted CSV rows with a streaming reader.")
     for run in runs:
@@ -249,7 +303,7 @@ def run_dynamic_analysis(audit_id: str, repository: dict) -> dict:
         "status": "completed", "package_root": str(root), "seconds": round(time.monotonic() - started, 1),
         "compile": {**compiled, "evidence_id": compile_record.evidence_id},
         "data": {**{k: v for k, v in data.items() if k != "files"}, "files": data["files"][:120], "evidence_id": data_record.evidence_id},
-        "scripts_found": [str(p.relative_to(root)) for p in scripts], "runs": runs,
+        "scripts_found": [str(p.relative_to(root)) for p in scripts], "runs": runs, "analysis_sources": sources,
         "limitations": [
             "Repository code was executed with the audit's own Python interpreter without isolation. This is intended for trusted packages.",
             f"At most {MAX_SCRIPTS} analysis notebooks or scripts were run, each under a {SCRIPT_TIMEOUT} second timeout. Inference, training, and generation scripts were not run.",
@@ -258,17 +312,26 @@ def run_dynamic_analysis(audit_id: str, repository: dict) -> dict:
     }
 
 
-def run_generated_checks(audit_id: str, repository: dict, dynamic: dict, checks: list[dict]) -> list[dict]:
+def clear_checks(root: Path):
+    checks_dir = root / ".replicagent_checks"
+    for stale in checks_dir.glob("*.py") if checks_dir.exists() else []:
+        stale.unlink()
+
+
+def run_generated_checks(audit_id: str, repository: dict, dynamic: dict, checks: list[dict], round_number: int = 1) -> list[dict]:
+    """Run a batch of model-written checks in parallel and record each as evidence."""
     if dynamic.get("status") != "completed" or not checks:
         return []
     root = Path(dynamic["package_root"])
     ledger = EvidenceLedger(audit_id)
-    checks_dir = root / ".replicagent_checks"
-    for stale in checks_dir.glob("*.py") if checks_dir.exists() else []:
-        stale.unlink()
+    if round_number == 1:
+        clear_checks(root)
     with ThreadPoolExecutor(max_workers=PARALLEL_RUNS) as pool:
-        results = list(pool.map(lambda check: run_generated_check(root, check), checks[:8]))
-    for result in results:
-        record = ledger.add("generated_check", repository["source"], f"{repository['revision']}, {result['script_path']}", json.dumps(result, ensure_ascii=False, sort_keys=True), f"Executed a model-written check script under a {CHECK_TIMEOUT} second timeout and read its final RESULT line.")
+        results = list(pool.map(lambda check: run_generated_check(root, {**check, "claim_id": f"{check['claim_id']}_r{round_number}" if round_number > 1 else check["claim_id"]}), checks))
+    for check, result in zip(checks, results):
+        result["claim_id"] = check["claim_id"]
+        result["round"] = round_number
+        observation = json.dumps({k: v for k, v in result.items() if k != "script"} | {"script": result["script"][:6000]}, ensure_ascii=False, sort_keys=True)
+        record = ledger.add("generated_check", repository["source"], f"{repository['revision']}, {result['script_path']}", observation, f"Executed a model-written check script under a {CHECK_TIMEOUT} second timeout and read its final RESULT line (round {round_number}).")
         result["evidence_id"] = record.evidence_id
     return results

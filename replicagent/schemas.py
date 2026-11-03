@@ -137,6 +137,8 @@ class AuditReport(BaseModel):
     dynamic_analysis: dict = Field(default_factory=dict)
     references: dict = Field(default_factory=dict)
     generated_checks: list[dict] = Field(default_factory=list)
+    check_loop: dict = Field(default_factory=dict)
+    metric_trace: list[dict] = Field(default_factory=list)
     problems: list["Problem"] = Field(default_factory=list)
     citation_checks: list["CitationCheck"] = Field(default_factory=list)
     correctness_summary: str = ""
@@ -145,15 +147,59 @@ class AuditReport(BaseModel):
 
 
 class GeneratedCheck(BaseModel):
-    claim_id: str
-    description: str = Field(description="What the script computes and from which files.")
+    claim_id: str = Field(description="The claim ID for a claim check, or a short label such as K01 for a consistency check.")
+    kind: Literal["claim", "consistency"] = "claim"
+    description: str = Field(description="What the script computes and from which files, including every filter applied.")
     script: str = Field(description="A self-contained Python 3 script that prints RESULT=<value> as its last line.")
-    expected_value: str = Field(description="The paper's reported value for this claim.")
+    expected_value: str = Field(default="", description="The paper's reported value, or a JSON object of cell label to value for a table sweep. Empty for consistency checks.")
 
 
 class CheckPlan(BaseModel):
     checks: list[GeneratedCheck]
     notes: list[str]
+
+
+class CheckRevision(BaseModel):
+    claim_id: str
+    script: str = Field(default="", description="The corrected script, or empty when giving up.")
+    give_up: bool = False
+    reason: str = Field(default="", description="Why the previous attempt failed, or why the value cannot be computed from the stored data.")
+
+
+class ConsistencyAssessment(BaseModel):
+    check_id: str
+    issue: bool = Field(description="True when the output reveals an inconsistency, missing data, or provenance problem.")
+    severity: Literal["critical", "high", "medium", "low", "informational"] = "informational"
+    title: str = ""
+    explanation: str = ""
+
+
+class RevisionPlan(BaseModel):
+    revisions: list[CheckRevision]
+    assessments: list[ConsistencyAssessment]
+    notes: list[str]
+
+
+class MetricTrace(BaseModel):
+    name: str = Field(description="The metric, selection strategy, filter, normalization, or panel definition as the paper names it.")
+    paper_definition: str
+    paper_evidence_id: str
+    paper_quote: str = Field(description="A short exact quote from the paper source that defines it.")
+    code_file: str = Field(default="", description="The implementing file, exactly as listed, or empty when not found.")
+    code_evidence_id: str = ""
+    code_quote: str = Field(default="", description="A short exact quote from that code record.")
+    code_definition: str = ""
+    column_selection: str = Field(default="", description="The exact expression that selects columns or files, and EVERY column or file name the code creates or reads that it matches. 'n/a' when none.")
+    panel: str = Field(default="", description="Which models' values the code iterates, sums, averages, or selects over, versus the set the paper names for this computation.")
+    missing_value_policy: str = Field(default="", description="What the code does with missing, NaN, or absent entries (for example pandas sum skips NaN), and whether the paper states a policy.")
+    normalization_scope: str = Field(default="", description="What the numerator counts (which tokens or items, prompt included or not) and what the denominator counts (bytes or tokens of what), versus the paper.")
+    consistent: Literal["yes", "partially", "no", "not_found"]
+    discrepancy: str = Field(default="", description="How the code differs from the paper, if it does.")
+
+
+class MetricMap(BaseModel):
+    metrics: list[MetricTrace]
+    limitations: list[str]
 
 
 class Problem(BaseModel):

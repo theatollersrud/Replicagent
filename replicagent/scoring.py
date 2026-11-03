@@ -99,7 +99,7 @@ def dynamic_execution_summary(dynamic: dict | None, checks: list[dict], comparis
         "rationale": (f"Compilation {'passed' if dynamic['compile']['compiles'] else 'failed'}, raw data {'were' if dynamic['data']['raw_data_present'] else 'were not'} present, "
                       f"and {sum(1 for run in runs if run['succeeded'])} of {len(runs)} analysis scripts ran to completion."),
     }
-    judged = [c for c in checks if c.get("matches") is not None]
+    judged = [c for c in checks if c.get("kind", "claim") == "claim" and c.get("matches") is not None]
     compared = len(comparisons) + len(judged)
     matched = sum(1 for c in comparisons if c.matches) + sum(1 for c in judged if c["matches"])
     reproduction = None

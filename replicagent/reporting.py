@@ -2,7 +2,7 @@ import json
 
 from pathlib import Path, PurePath
 
-from .schemas import AuditReport, AuditFinding, CorrectnessReview, PaperManifest, Problem, Review
+from .schemas import AuditReport, AuditFinding, CorrectnessReview, MetricMap, PaperManifest, Problem, Review
 from .comparison import compare_cached_counts
 from .scoring import aggregate_problems, calculate_static_score, calculate_dynamic_score, dynamic_execution_summary
 from .storage import EvidenceLedger, audit_dir, read, save, verify_quote
@@ -29,7 +29,7 @@ def _optional(audit_id: str, name: str, default):
     return json.loads(path.read_text(encoding="utf-8")) if path.exists() else default
 
 
-def deterministic_problems(dynamic: dict, references: dict, checks: list[dict], comparisons: list = ()) -> list[Problem]:
+def deterministic_problems(dynamic: dict, references: dict, checks: list[dict], comparisons: list = (), assessments: list[dict] = ()) -> list[Problem]:
     """Problems that follow directly from recorded observations, without model interpretation."""
     problems = []
     if dynamic.get("status") == "completed":
@@ -48,10 +48,20 @@ def deterministic_problems(dynamic: dict, references: dict, checks: list[dict], 
                                     rationale="Tables and figures cannot be regenerated without the stored results.", evidence_id=dynamic["data"]["evidence_id"], quote='"raw_data_present": false'))
     confirmed = {c.claim_id for c in comparisons if c.matches}
     for check in checks:
-        if check.get("matches") is False and check["claim_id"] not in confirmed:
+        if check.get("kind", "claim") == "claim" and check.get("matches") is False and check["claim_id"] not in confirmed:
+            cells = check.get("cell_matches") or {}
+            detail = f" {sum(1 for v in cells.values() if v)} of {len(cells)} table cells matched; the differing cells are {', '.join(k for k, v in cells.items() if not v)[:300]}." if cells else ""
+            reason = check.get("abandoned", "")
             problems.append(Problem(title=f"Claim {check['claim_id']} recomputed from stored data differs from the paper", category="result_mismatch", severity="medium", basis="observation",
-                                    rationale=f"The check computed {check['computed_value']} but the paper reports {check['expected_value']}. The check script was model-written, so the filter it applied needs review before this counts against the paper.",
+                                    rationale=f"After {check.get('round', 1)} round(s) the check computed {str(check['computed_value'])[:200]} but the paper reports {check['expected_value'][:200]}.{detail} {('The model concluded: ' + reason) if reason else ''} The check script was model-written, so the filter it applied needs review before this counts against the paper.",
                                     evidence_id=check["evidence_id"], quote=f'"computed_value": "{check["computed_value"]}"', claim_ids=[check["claim_id"]], location=check["script_path"]))
+    for assessment in assessments:
+        check = next((c for c in checks if c["claim_id"] == assessment["check_id"]), None)
+        if assessment.get("issue") and check and check.get("evidence_id"):
+            problems.append(Problem(title=assessment.get("title") or f"Consistency check {assessment['check_id']} found an issue", category="missing_data" if "missing" in (assessment.get("title", "") + assessment.get("explanation", "")).casefold() else "implementation_discrepancy",
+                                    severity=assessment.get("severity", "medium"), basis="interpretation",
+                                    rationale=assessment.get("explanation", "") + f" The script is {check['script_path']}; its output is recorded in {check['evidence_id']}.",
+                                    evidence_id=check["evidence_id"], quote=f'"claim_id": "{check["claim_id"]}"', location=check["script_path"]))
     counts = references.get("counts", {})
     if counts.get("not_found"):
         missing = [r["key"] for r in references["references"] if r["status"] == "not_found"]
@@ -76,7 +86,11 @@ def finalize(audit_id: str, review_value, correctness_value=None) -> tuple[Audit
         save(audit_id, "correctness.json", correctness.model_dump())
     dynamic = _optional(audit_id, "dynamic.json", {})
     references = _optional(audit_id, "references.json", {})
-    checks = _optional(audit_id, "checks.json", [])
+    check_run = _optional(audit_id, "checks.json", {})
+    if isinstance(check_run, list):  # earlier layout
+        check_run = {"results": check_run, "assessments": [], "rounds": 1, "log": []}
+    checks = check_run.get("results", [])
+    metric_map = _optional(audit_id, "metric_map.json", {})
     manifest = PaperManifest.model_validate(read(audit_id, "manifest.json"))
     repository = read(audit_id, "repository.json")
     evidence = {e.evidence_id: e for e in EvidenceLedger(audit_id).records()}
@@ -116,14 +130,39 @@ def finalize(audit_id: str, review_value, correctness_value=None) -> tuple[Audit
     evidence = {e.evidence_id: e for e in EvidenceLedger(audit_id).records()}
     rank = {"critical": 0, "high": 1, "medium": 2, "low": 3, "informational": 4}
     findings.sort(key=lambda finding: rank[finding.severity])
-    problems = deterministic_problems(dynamic, references, checks, comparisons)
+    problems = deterministic_problems(dynamic, references, checks, comparisons, check_run.get("assessments", []))
+    traced = []
+    grouped: dict[str, list[dict]] = {}
+    for metric in metric_map.get("metrics", []):
+        paper_ok = verify_quote(evidence, metric.get("paper_evidence_id", ""), metric.get("paper_quote", ""))
+        code_ok = metric.get("consistent") == "not_found" or verify_quote(evidence, metric.get("code_evidence_id", ""), metric.get("code_quote", ""))
+        metric["quotes_verified"] = bool(paper_ok and code_ok)
+        traced.append(metric)
+        if metric.get("consistent") in {"no", "partially"} and paper_ok and code_ok:
+            # Metrics that share one root cause (the same discrepancy wording and code file) become one problem.
+            key = " ".join(metric.get("discrepancy", "").casefold().split())[:90] + "|" + metric.get("code_file", "")
+            grouped.setdefault(key, []).append(metric)
+        elif metric.get("consistent") in {"no", "partially"}:
+            rejected.append(f"Metric trace '{metric['name']}' had an unverifiable paper or code quote.")
+    for group in grouped.values():
+        first = group[0]
+        names = ", ".join(m["name"] for m in group)
+        problems.append(Problem(title=f"{names}: code differs from the paper's definition", category="implementation_discrepancy", severity="high" if any(m["consistent"] == "no" for m in group) else "medium", basis="interpretation",
+                                rationale=f"Paper: {first['paper_definition'][:300]} Code ({first.get('code_file', '')}): {first.get('code_definition', '')[:300]} Discrepancy: {first.get('discrepancy', '')[:400]}" + (f" The same difference affects {len(group)} definitions." if len(group) > 1 else ""),
+                                evidence_id=first["code_evidence_id"], quote=first["code_quote"], location=first.get("code_file", "")))
     citation_checks = []
     recorded_files = {Path(p.location.split(":")[0]).name.casefold() for p in problems if p.location}
+    traced_names = [m["name"].casefold() for m in traced if m.get("consistent") in {"no", "partially"} and m.get("quotes_verified")]
+    mismatched_claims = {p.claim_ids[0].casefold() for p in problems if p.category == "result_mismatch" and p.claim_ids}
     if correctness:
         for problem in correctness.problems:
             haystack = f"{problem.title} {problem.location} {problem.quote}".casefold()
             if problem.category in {"code_bug", "execution_failure"} and any(name and name in haystack for name in recorded_files):
                 continue  # already recorded as a deterministic observation
+            if problem.category == "implementation_discrepancy" and any(name and (name in haystack or all(word in haystack for word in name.split()[:2])) for name in traced_names):
+                continue  # already recorded from the metric trace
+            if problem.category == "result_mismatch" and (set(problem.claim_ids) & mismatched_claims or any(cid in haystack for cid in mismatched_claims)):
+                continue  # already recorded from the check loop
             if verify_quote(evidence, problem.evidence_id, problem.quote) and set(problem.claim_ids) <= claim_ids:
                 problem.basis = "interpretation"
                 problems.append(problem)
@@ -144,7 +183,9 @@ def finalize(audit_id: str, review_value, correctness_value=None) -> tuple[Audit
         reference_verification_status=reference_status if reference_status in {"not_attempted", "blocked", "failed", "partially_verified", "verified"} else "not_attempted",
         dynamic_analysis={k: v for k, v in dynamic.items() if k not in {"data"}} | ({"data": {k: v for k, v in dynamic["data"].items() if k != "files"}} if dynamic_ran else {}),
         references={k: v for k, v in references.items() if k != "references"} | ({"unresolved": [r for r in references.get("references", []) if r["status"] in {"not_found", "title_mismatch"}]} if references else {}),
-        generated_checks=[{k: v for k, v in check.items() if k not in {"stdout", "stderr"}} for check in checks],
+        generated_checks=[{k: v for k, v in check.items() if k not in {"stdout", "stderr", "script"}} for check in checks],
+        check_loop={k: v for k, v in check_run.items() if k != "results"},
+        metric_trace=traced,
         problems=problems, citation_checks=citation_checks,
         correctness_summary=correctness.summary if correctness else "", implementation_matches_paper=correctness.implementation_matches_paper if correctness else "unknown",
         aggregated_score=aggregate_problems(problems) if (dynamic_ran or correctness) else None,
@@ -262,12 +303,44 @@ def render_dynamic_sections(report: AuditReport) -> list[str]:
         lines.extend([f"The dynamic stage took {dynamic['seconds']} seconds. Inference, training, and generation scripts were deliberately not run.", ""])
     elif dynamic:
         lines.extend(["## Dynamic analysis", "", dynamic.get("reason", "Dynamic analysis was not run."), ""])
-    if report.generated_checks:
-        lines.extend(["## Generated checks recompute claims from stored data", "", "Each script was written by the model from the data inventory and executed once. A mismatch may be a flaw in the script rather than in the paper.", "",
-                      "| Claim | Expected | Computed | Comparison | Script | Evidence |", "|---|---:|---:|---|---|---|"])
-        for check in report.generated_checks:
-            comparison = "Matches" if check["matches"] else ("Differs" if check["matches"] is False else ("timed out" if check.get("timed_out") else "no RESULT line"))
-            lines.append(f"| {check['claim_id']} | {check['expected_value']} | {check['computed_value'] if check['computed_value'] is not None else '—'} | {comparison} | {check['script_path']} | {check.get('evidence_id', '')} |")
+    claim_checks = [c for c in report.generated_checks if c.get("kind", "claim") == "claim"]
+    consistency_checks = [c for c in report.generated_checks if c.get("kind") == "consistency"]
+    loop = report.check_loop
+    if claim_checks or consistency_checks:
+        budget = loop.get("budget", {})
+        lines.extend(["## Generated checks recompute claims from stored data", "",
+                      f"Scripts were written by the model from the data inventory and the analysis code, run, and revised when they did not match, for {loop.get('rounds', 1)} round(s) in {loop.get('seconds', '?')} seconds. "
+                      f"Limits: {budget.get('max_rounds', 1)} rounds, {budget.get('stage_seconds', '?')} seconds for the stage, {budget.get('claim_seconds', '?')} seconds of script time per claim, {budget.get('script_seconds', 60)} seconds per script. A mismatch may be a flaw in the script rather than in the paper.", ""])
+    if claim_checks:
+        lines.extend(["| Claim | Expected | Computed | Comparison | Rounds | Script | Evidence |", "|---|---:|---:|---|---:|---|---|"])
+        for check in claim_checks:
+            cells = check.get("cell_matches") or {}
+            comparison = ("Matches" if check["matches"] else "Differs") if check["matches"] is not None else ("timed out" if check.get("timed_out") else "no result")
+            if cells:
+                comparison += f" ({sum(1 for v in cells.values() if v)} of {len(cells)} cells)"
+            if check.get("abandoned"):
+                comparison += " — abandoned: " + check["abandoned"][:120]
+            expected = check["expected_value"] if len(check["expected_value"]) <= 40 else f"{len(cells) or '?'} cells"
+            computed = "—" if check["computed_value"] is None else (check["computed_value"] if len(str(check["computed_value"])) <= 40 else "JSON sweep")
+            lines.append(f"| {check['claim_id']} | {expected} | {computed} | {comparison} | {check.get('round', 1)} | {check['script_path']} | {check.get('evidence_id', '')} |")
+        lines.append("")
+    if consistency_checks:
+        assessments = {a["check_id"]: a for a in loop.get("assessments", [])}
+        lines.extend(["### Data-consistency checks", "", "These scripts join files, count missing scores, and list which models and columns the analysis code actually uses. The issue judgement is the model's reading of the output.", "",
+                      "| Check | What it tested | Outcome | Issue | Evidence |", "|---|---|---|---|---|"])
+        for check in consistency_checks:
+            assessment = assessments.get(check["claim_id"], {})
+            outcome = "ran" if check.get("exit_code") == 0 else ("timed out" if check.get("timed_out") else f"failed (exit {check.get('exit_code')})")
+            issue = (assessment.get("severity", "") + ": " + (assessment.get("title") or assessment.get("explanation", ""))[:160]) if assessment.get("issue") else ("none found" if assessment else "not assessed")
+            lines.append(f"| {check['claim_id']} | {check['description'][:140]} | {outcome} | {issue} | {check.get('evidence_id', '')} |")
+        lines.append("")
+    if loop.get("log"):
+        lines.extend(["Notes from the check loop:", ""] + [f"- {note[:300]}" for note in loop["log"][:8]] + [""])
+    if report.metric_trace:
+        lines.extend(["## Metric definitions traced from the paper to the code", "", "Each row pairs a definition in the paper with the code that implements it. Judgements are the model's; quotes on both sides were checked mechanically.", "",
+                      "| Definition | Code file | Consistent | Discrepancy | Quotes verified |", "|---|---|---|---|---|"])
+        for metric in report.metric_trace:
+            lines.append(f"| {metric['name'][:60]} | {metric.get('code_file', '')[:50] or '—'} | {metric['consistent'].replace('_', ' ')} | {metric.get('discrepancy', '')[:200] or '—'} | {'yes' if metric.get('quotes_verified') else 'no'} |")
         lines.append("")
     references = report.references
     if references:
