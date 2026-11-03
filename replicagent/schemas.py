@@ -134,3 +134,59 @@ class AuditReport(BaseModel):
     summary: str
     limitations: list[str]
     rejected_evidence_references: list[str]
+    dynamic_analysis: dict = Field(default_factory=dict)
+    references: dict = Field(default_factory=dict)
+    generated_checks: list[dict] = Field(default_factory=list)
+    problems: list["Problem"] = Field(default_factory=list)
+    citation_checks: list["CitationCheck"] = Field(default_factory=list)
+    correctness_summary: str = ""
+    implementation_matches_paper: str = "unknown"
+    aggregated_score: "AggregatedScore | None" = None
+
+
+class GeneratedCheck(BaseModel):
+    claim_id: str
+    description: str = Field(description="What the script computes and from which files.")
+    script: str = Field(description="A self-contained Python 3 script that prints RESULT=<value> as its last line.")
+    expected_value: str = Field(description="The paper's reported value for this claim.")
+
+
+class CheckPlan(BaseModel):
+    checks: list[GeneratedCheck]
+    notes: list[str]
+
+
+class Problem(BaseModel):
+    title: str
+    category: Literal["implementation_discrepancy", "mathematical_error", "code_bug", "execution_failure", "missing_data", "result_mismatch", "reference_missing", "citation_misuse", "documentation"]
+    severity: Literal["critical", "high", "medium", "low", "informational"]
+    rationale: str
+    evidence_id: str
+    quote: str = Field(description="A short exact quote from the cited evidence record.")
+    claim_ids: list[str] = Field(default_factory=list)
+    location: str = ""
+    basis: Literal["observation", "interpretation"] = "interpretation"
+
+
+class CitationCheck(BaseModel):
+    key: str
+    statement: str = Field(description="The sentence in the paper that cites this reference.")
+    support: Literal["supports", "partially_supports", "does_not_support", "unknown"]
+    rationale: str
+
+
+class CorrectnessReview(BaseModel):
+    summary: str
+    implementation_matches_paper: Literal["yes", "partially", "no", "unknown"]
+    implementation_rationale: str
+    problems: list[Problem]
+    citation_checks: list[CitationCheck]
+    limitations: list[str]
+
+
+class AggregatedScore(BaseModel):
+    score: float | None
+    maximum: float = 10.0
+    provisional: bool = True
+    penalties: list[dict]
+    rationale: str

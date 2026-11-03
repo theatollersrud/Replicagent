@@ -39,7 +39,7 @@ def _tex_files(payload: bytes) -> dict[str, str]:
             name = PurePosixPath(member.name)
             if name.is_absolute() or ".." in name.parts:
                 raise ValueError("The arXiv source archive contains an unsafe file path.")
-            if not member.isfile() or name.suffix.lower() != ".tex" or member.size > MAX_SOURCE_CHARS:
+            if not member.isfile() or name.suffix.lower() not in {".tex", ".bbl"} or member.size > MAX_SOURCE_CHARS:
                 continue
             stream = archive.extractfile(member)
             if stream is not None:
@@ -48,7 +48,7 @@ def _tex_files(payload: bytes) -> dict[str, str]:
 
 
 def _main_file(files: dict[str, str]) -> str | None:
-    candidates = [name for name, text in files.items() if re.search(r"^[^%\n]*\\documentclass", text, re.M)]
+    candidates = [name for name, text in files.items() if name.endswith(".tex") and re.search(r"^[^%\n]*\\documentclass", text, re.M)]
     with_body = [name for name in candidates if "\\begin{document}" in files[name]]
     pool = with_body or candidates
     return max(pool, key=lambda name: len(files[name])) if pool else None
@@ -82,7 +82,19 @@ def flatten(files: dict[str, str], name: str, depth: int = 0, seen: frozenset = 
             return match.group(0)
         return "\n" + flatten(files, resolved, depth + 1, seen | {name}) + "\n"
 
-    return re.sub(r"(?<!\\)\\(input|include)\s*\{([^}]*)\}", replace, text)[:MAX_SOURCE_CHARS]
+    text = re.sub(r"(?<!\\)\\(input|include)\s*\{([^}]*)\}", replace, text)
+
+    def bibliography(match):
+        if match.group(0).lstrip().startswith("%"):
+            return match.group(0)
+        names = [n.strip() for n in match.group(1).split(",")]
+        bbls = [f for f in files if f.endswith(".bbl")]
+        chosen = next((f for f in bbls if PurePosixPath(f).stem in names), bbls[0] if len(bbls) == 1 else None)
+        return match.group(0) if chosen is None else "\n" + files[chosen] + "\n"
+
+    if depth == 0:
+        text = re.sub(r"(?<!\\)\\bibliography\s*\{([^}]*)\}", bibliography, text)
+    return text[:MAX_SOURCE_CHARS]
 
 
 def extract_latex_source(payload: bytes) -> str | None:
@@ -105,6 +117,8 @@ _FORMATTING = r"\\(?:textbf|textit|textsc|texttt|textrm|textsf|emph|underline|ma
 
 def latex_normalise(text: str) -> str:
     """Reduce LaTeX markup to its visible content so `64$^{(-6.35)}$` and `64^{(-6.35)}` compare equal."""
+    # Model output sometimes escapes backslashes twice, so `\\textbf` arrives as `\\\\textbf`. Collapse those before parsing.
+    text = re.sub(r"\\\\(?=[A-Za-z])", "\\\\", text) if "\\\\" in text else text
     text = re.sub(r"(?<!\\)%[^\n]*", "", text)
     text = re.sub(r"\\(?:hphantom|vphantom|phantom|hspace\*?|vspace\*?|label|ref|cite[tp]?\*?|cmidrule|cline)\s*(\[[^\]]*\])?\s*\{[^{}]*\}", "", text)
     text = re.sub(r"\\multicolumn\s*\{[^{}]*\}\s*\{[^{}]*\}", "", text)

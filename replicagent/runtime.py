@@ -33,7 +33,7 @@ class AuditLlmAgent(LlmAgent):
 
     async def _run_async_impl(self, ctx):
         audit_id = ctx.session.state["audit_id"]
-        stage = "Extracting paper claims" if self.output_key == "paper_manifest" else "Reviewing the observed evidence"
+        stage = {"paper_manifest": "Extracting paper claims", "review": "Reviewing the observed evidence", "check_plan": "Writing verification scripts", "correctness": "Assessing correctness"}.get(self.output_key, "Reviewing the observed evidence")
         for attempt in range(2):
             record_stage(audit_id, stage)
             try:

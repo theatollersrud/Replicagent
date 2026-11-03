@@ -79,3 +79,45 @@ def calculate_dynamic_score(execution: dict | None = None, policy: dict | None =
         status=Status(execution.get("status", "not_attempted")),
         rationale="The dynamic score has its own 0–10 scale. Executability contributes up to 4 points and reproduction of reported results contributes up to 6 points. Unattempted checks remain unresolved. Successful smoke tests alone do not establish reproduction of the paper's results.",
     )
+
+
+SEVERITY_PENALTY = {"critical": 3.0, "high": 2.0, "medium": 1.0, "low": 0.5, "informational": 0.0}
+
+
+def dynamic_execution_summary(dynamic: dict | None, checks: list[dict], comparisons: list) -> dict:
+    """Translate dynamic observations into the fractions the dynamic rubric consumes."""
+    if not dynamic or dynamic.get("status") != "completed":
+        return {"status": dynamic.get("status", "not_attempted") if dynamic else "not_attempted", "reason": (dynamic or {}).get("reason", "Dynamic analysis was not run."), "criteria": {}}
+    parts = [1.0 if dynamic["compile"]["compiles"] else 0.0, 1.0 if dynamic["data"]["raw_data_present"] else 0.0]
+    runs = dynamic.get("runs", [])
+    if runs:
+        parts.append(sum(1 for run in runs if run["succeeded"]) / len(runs))
+    execution_fraction = sum(parts) / len(parts)
+    execution_ids = [dynamic["compile"]["evidence_id"], dynamic["data"]["evidence_id"], *[run["evidence_id"] for run in runs if run.get("evidence_id")]]
+    execution = {
+        "fraction": round(execution_fraction, 4), "status": "partially_verified", "evidence_ids": execution_ids,
+        "rationale": (f"Compilation {'passed' if dynamic['compile']['compiles'] else 'failed'}, raw data {'were' if dynamic['data']['raw_data_present'] else 'were not'} present, "
+                      f"and {sum(1 for run in runs if run['succeeded'])} of {len(runs)} analysis scripts ran to completion."),
+    }
+    judged = [c for c in checks if c.get("matches") is not None]
+    compared = len(comparisons) + len(judged)
+    matched = sum(1 for c in comparisons if c.matches) + sum(1 for c in judged if c["matches"])
+    reproduction = None
+    if compared:
+        reproduction = {
+            "fraction": round(matched / compared, 4), "status": "partially_verified" if matched else "failed",
+            "evidence_ids": [c.evidence_id for c in comparisons] + [c["evidence_id"] for c in judged if c.get("evidence_id")],
+            "rationale": f"{matched} of {compared} claim checks computed from stored data matched the paper. The experiments themselves were not rerun.",
+        }
+    return {"status": "partially_verified", "criteria": {"execution": execution, "result_reproduction": reproduction}}
+
+
+def aggregate_problems(problems: list) -> "AggregatedScore":
+    from .schemas import AggregatedScore
+    penalties = [{"title": p.title, "severity": p.severity, "penalty": SEVERITY_PENALTY[p.severity]} for p in problems]
+    total = sum(item["penalty"] for item in penalties)
+    return AggregatedScore(
+        score=round(max(0.0, 10.0 - total), 2), penalties=penalties,
+        rationale=("The aggregated score starts at 10 and subtracts 3 for each critical, 2 for each high, 1 for each medium, and 0.5 for each low problem, floored at 0. "
+                   "It mixes verified observations with agent interpretations, so it is a provisional triage number rather than a calibrated assessment."),
+    )

@@ -99,3 +99,12 @@ def test_arxiv_ingestion_prefers_latex_and_falls_back_to_pdf(tmp_path, monkeypat
     document = services.ingest_paper("audit-b", "https://arxiv.org/abs/2510.21513")
     assert document["format"] == "pdf" and pdf_used
     assert "no LaTeX source" in document["ingestion_notes"][0]
+
+
+def test_doubly_escaped_model_quotes_still_verify():
+    ledger = EvidenceLedger("audit-escaped")
+    tex = ledger.add("paper", "arxiv", "LaTeX source", TABLE.decode(), LATEX_METHOD)
+    records = {record.evidence_id: record for record in ledger.records()}
+    doubled = "CodeLlama & 59$\\\\to$\\\\hphantom{1}64$^{(-6.35)}$ \\\\\\\\"
+    assert verify_quote(records, tex.evidence_id, doubled)
+    assert latex_normalise(doubled) == latex_normalise(r"CodeLlama & 59$\to$\hphantom{1}64$^{(-6.35)}$ \\")

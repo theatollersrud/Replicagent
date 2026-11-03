@@ -17,13 +17,19 @@ Open http://localhost:8000 and select **replicagent** in the application selecto
 Audit https://arxiv.org/abs/2510.21513v2
 ```
 
-The workflow has five visible stages. It normally makes two Gemini calls.
+On this branch the workflow has nine visible stages and normally makes four Gemini calls. The first five are the static audit from `main`.
 
 1. `IngestPaper` reads the paper and records its source evidence. For arXiv papers it downloads the LaTeX source first and falls back to PDF text extraction only when arXiv offers no source.
 2. `UnderstandPaper` extracts empirical claims using Gemini and a typed output schema.
 3. `InspectArtifacts` discovers the replication package and inspects source files without executing them.
 4. `ReviewEvidence` interprets the evidence and proposes reproduction steps using Gemini.
-5. `VerifyAndScore` checks source quotes, independently counts supported cached results, calculates separate static and dynamic scores, and saves the final report.
+5. `DynamicAnalysis` collects the compile check, data inventory, analysis script runs, and reference lookups. These start in the background as soon as static inspection finishes, so they overlap with the `ReviewEvidence` model call.
+6. `GenerateChecks` asks Gemini to write small pandas scripts that recompute verified claims from the stored data.
+7. `RunChecks` runs those scripts in parallel and compares each `RESULT=` line with the paper's value.
+8. `AssessCorrectness` asks Gemini whether the code implements what the paper says, lists problems with severity, and judges whether cited sentences match the reference titles.
+9. `VerifyAndScore` checks source quotes, independently counts supported cached results, calculates the static, dynamic, and aggregated scores, and saves the final report.
+
+Pass `--static-only` to the terminal runner to stop after the static audit.
 
 The supplied paper links to an anonymized Figshare package. The discovery fallback searches Zenodo by title and requires metadata containing the exact arXiv identifier. It can find the later public package at https://zenodo.org/records/19564925. The report records that this package may differ from the paper's original package.
 
@@ -57,9 +63,21 @@ The evidence ledger is append-only. It records source locations, observations, h
 
 The static and dynamic assessments each have their own 0–10 score and weights in `configs/scoring.json`. The static score covers code, stored artifacts, documentation, configuration, and environment indicators. The dynamic score covers execution and reproduction of reported results. Each assessment reports its own coverage and unresolved points. The report has no combined score. A missed static indicator means that the indicator was not detected in the inspected package. The rubric is a coarse demonstration policy that needs expert calibration.
 
-On `main`, dynamic execution is unattempted and the dynamic score is displayed as **Not assessed**, with JSON value `null`. This preserves the distinction between an unattempted test and a demonstrated failure. Mathematical correctness and reference verification are also untested.
+On `main`, dynamic execution is unattempted and the dynamic score is displayed as **Not assessed**, with JSON value `null`. On the `dynamic-analysis` branch, the report adds sections for the dynamic analysis, generated checks, references, correctness problems, citation support, and the aggregated score. This preserves the distinction between an unattempted test and a demonstrated failure. Mathematical correctness and reference verification are also untested.
 
 For the supplied replication package, the report can independently count the union of solved problems across all models from the authors' cached CSV labels. It can compare those counts with extracted theoretical-maximum claims. It reads the LiveCodeBench date filter from the authors' analysis notebook through Python's source parser and applies that filter to the benchmark metadata. It does not execute the notebook. These checks test consistency with stored labels and do not independently establish that the generated programs pass their tests.
+
+## Dynamic analysis on this branch
+
+The dynamic stage never reruns experiments. It extracts the package under `inputs/work/`, parses every Python file and notebook, lists the data files with CSV headers and row counts, and runs at most six figure or table notebooks or scripts. Notebooks are converted to scripts with IPython magics removed and run from their own directory with the Matplotlib Agg backend under a 180 second timeout. Files that scripts create or modify are listed as produced outputs. Scripts that import PyTorch, Transformers, or similar stacks, and files whose names suggest inference, training, or generation, are skipped. A missing module triggers one `pip install` into the audit environment and one retry.
+
+Repository code runs with the audit's own interpreter and no isolation. This branch is meant for papers and packages that the auditor trusts. Isolation can be added later.
+
+Reference checking parses `\bibitem` entries from the inlined `.bbl`. DOIs are resolved on Crossref, arXiv identifiers (including `10.48550/arXiv.` DOIs) on the arXiv API, and remaining entries are searched on Crossref by title. Lookups run three at a time with a 60 second budget and are never retried. The first failure, including a `429 Too Many Requests` response, stops the remaining lookups, and the report states that reference checking is not fully completed. A lookup miss is reported as a problem, not as proof of a fabricated reference.
+
+The correctness review is a single Gemini call over the paper source, the code excerpts, the dynamic observations, the generated check results, and the reference results. Every problem must quote an evidence record, and quotes are checked mechanically. Parse failures, failed script runs, unresolved references, and mismatched generated checks are added as deterministic problems before the model's interpretations. The aggregated score starts at 10 and subtracts 3 per critical, 2 per high, 1 per medium, and 0.5 per low problem. It is a provisional triage number.
+
+The dynamic score keeps its two criteria. Execution averages whether the package parses, whether stored data exist, and the fraction of analysis scripts that ran. Result reproduction is the fraction of cached-label comparisons and generated checks that matched the paper.
 
 ## LaTeX sources are preferred
 
@@ -87,7 +105,7 @@ For a new environment, create a virtual environment and install the project.
 ```bash
 python3.12 -m venv .venv
 source .venv/bin/activate
-python -m pip install -e '.[test]'
+python -m pip install -e '.[test,dynamic]'
 cp .env.example .env
 gcloud auth application-default login
 adk web --port 8000
@@ -105,7 +123,7 @@ You can change the model with `AUDITOR_MODEL` and the project with `GOOGLE_CLOUD
 python3.12 -m pytest -q
 ```
 
-The tests use synthetic fixtures and make no paid model calls. They cover unresolved scores, missing-code caps, invalid evidence rejection, archive traversal checks, static syntax inspection without execution, cached-result counting, arXiv LaTeX source selection with PDF fallback, LaTeX-aware quote matching, and the local API lifecycle.
+The tests use synthetic fixtures and make no paid model calls. They cover unresolved scores, missing-code caps, invalid evidence rejection, archive traversal checks, static syntax inspection without execution, cached-result counting, arXiv LaTeX source selection with PDF fallback, LaTeX-aware quote matching, notebook conversion and execution, generated check comparison, bibliography parsing, reference lookups that stop at the first failure, and the local API lifecycle.
 
 ## Use the optional API
 
