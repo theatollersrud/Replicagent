@@ -14,7 +14,7 @@ import os
 import subprocess
 import time
 from pathlib import Path, PurePosixPath
-from urllib.parse import urlparse, quote
+from urllib.parse import urlparse, quote, unquote
 
 import httpx
 from pypdf import PdfReader
@@ -132,12 +132,31 @@ def fetch_arxiv_latex(identifier: str) -> Path | None:
 
 
 def ingest_paper(audit_id: str, source: str, upload: bytes | None = None):
+    if not source and not upload:
+        raise ValueError("Provide the paper to audit.")
     ledger = EvidenceLedger(audit_id)
     notes = []
     if upload:
         path = audit_dir(audit_id) / "paper.pdf"
         path.write_bytes(upload)
         source = "uploaded-paper.pdf"
+    elif source.startswith("gs://"):
+        from google.cloud import storage
+        from .auth import local_credentials
+        parsed = urlparse(source)
+        if not parsed.netloc or not parsed.path.strip("/"):
+            raise ValueError("The Google Cloud Storage attachment address is incomplete.")
+        client = storage.Client(project=os.getenv("GOOGLE_CLOUD_PROJECT"), credentials=local_credentials())
+        blob = client.bucket(parsed.netloc).blob(unquote(parsed.path.lstrip("/")))
+        blob.reload(timeout=30)
+        limit = 25 * 1024 * 1024
+        if blob.size is not None and blob.size > limit:
+            raise ValueError("The PDF attachment exceeds the 25 MiB limit.")
+        payload = blob.download_as_bytes(start=0, end=limit, timeout=60)
+        if len(payload) > limit:
+            raise ValueError("The PDF attachment exceeds the 25 MiB limit.")
+        path = audit_dir(audit_id) / "paper.pdf"
+        path.write_bytes(payload)
     elif source.startswith("https://"):
         path = None
         identifier = arxiv_identifier(source)

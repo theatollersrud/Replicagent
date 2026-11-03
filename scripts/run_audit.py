@@ -32,7 +32,7 @@ async def run(source: str, repository: str | None = None, audit_id: str | None =
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("source", nargs="?", default="https://arxiv.org/abs/2510.21513v2")
+    parser.add_argument("source", help="The paper URL or local paper path to audit.")
     parser.add_argument("--repository")
     args = parser.parse_args()
     asyncio.run(run(args.source, args.repository))
