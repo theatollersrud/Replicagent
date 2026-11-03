@@ -133,3 +133,16 @@ def test_unsupported_attachment_is_reported_instead_of_falling_back():
     part = types.Part(inline_data=types.Blob(mime_type="image/png", data=b"image"))
     with pytest.raises(PaperInputError, match="PDF"):
         choose(context(parts=[part], state={"requested_paper_source": "old.tex"}))
+
+
+def test_runner_upload_keeps_request_metadata_only_for_the_hashed_pdf():
+    import hashlib
+    pdf = b"%PDF-1.7 uploaded through the local page"
+    state = {"requested_paper_source": "uploaded-paper.pdf", "requested_audit_id": "upload-1",
+             "requested_repository_url": "https://github.com/new/repo", "requested_upload_sha256": hashlib.sha256(pdf).hexdigest()}
+    part = types.Part(inline_data=types.Blob(mime_type="application/pdf", data=pdf))
+    selected = choose(context("Audit uploaded-paper.pdf", parts=[part], state=state))
+    assert (selected.upload, selected.requested_audit_id, selected.repository_url) == (pdf, "upload-1", "https://github.com/new/repo")
+    other = types.Part(inline_data=types.Blob(mime_type="application/pdf", data=b"%PDF-1.7 a different paper"))
+    selected = choose(context("Audit uploaded-paper.pdf", parts=[other], state=state))
+    assert selected.requested_audit_id is None and selected.repository_url is None

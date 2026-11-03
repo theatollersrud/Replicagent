@@ -2,6 +2,7 @@
 
 import argparse
 import asyncio
+import hashlib
 import uuid
 
 from google.adk.runners import Runner
@@ -11,17 +12,23 @@ from google.genai import types
 from replicagent.agent import root_agent
 
 
-async def run(source: str, repository: str | None = None, audit_id: str | None = None):
+async def run(source: str, repository: str | None = None, audit_id: str | None = None, upload: bytes | None = None):
     sessions = InMemorySessionService()
     session_id = uuid.uuid4().hex
     state = {"requested_paper_source": source, "requested_repository_url": repository}
     if audit_id:
         state["requested_audit_id"] = audit_id
+    if upload:
+        state["requested_upload_sha256"] = hashlib.sha256(upload).hexdigest()
     await sessions.create_session(app_name="replicagent", user_id="demo", session_id=session_id, state=state)
     runner = Runner(agent=root_agent, app_name="replicagent", session_service=sessions)
+    parts = [types.Part(text=f"Audit {source}")]
+    if upload:
+        # IngestPaper reads an inline PDF in place of the source URL.
+        parts.append(types.Part(inline_data=types.Blob(mime_type="application/pdf", data=upload)))
     async for event in runner.run_async(
         user_id="demo", session_id=session_id,
-        new_message=types.Content(role="user", parts=[types.Part(text=f"Audit {source}")]),
+        new_message=types.Content(role="user", parts=parts),
     ):
         if event.content:
             for part in event.content.parts or []:

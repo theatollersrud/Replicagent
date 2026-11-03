@@ -167,7 +167,10 @@ async def select_paper(ctx) -> PaperSelection:
         raise PaperInputError(_HELP)
 
     source, upload = next(iter(candidates.values()))
-    matches_request = protocol and upload is None and source == _requested_source(requested)
+    # A runner that sends a PDF also records its hash, so request metadata applies only to that file.
+    requested_upload = state.get("requested_upload_sha256")
+    same_upload = upload is None if not requested_upload else upload is not None and hashlib.sha256(upload).hexdigest() == requested_upload
+    matches_request = protocol and same_upload and source == _requested_source(requested)
     repository = repositories[0] if repositories else state.get("requested_repository_url") if matches_request else None
     audit_id = state.get("requested_audit_id") if matches_request else None
     return PaperSelection(source, upload, repository, audit_id)

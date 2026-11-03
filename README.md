@@ -2,6 +2,8 @@
 
 Replicagent is a Google Agent Development Kit (ADK) demo that reads a research paper, discovers a replication package, inspects its source files, and saves an evidence-grounded static reproducibility report.
 
+![How a Replicagent audit runs: entry points, the five-stage ADK workflow, and the evidence ledger](docs/architecture.svg)
+
 ## Use the shared Google Cloud agent
 
 Open [Replicagent's Playground](https://console.cloud.google.com/vertex-ai/agents/agent-engines/locations/europe-west4/agent-engines/649037315829661696/playground?project=agentic-oslo-team-12-9afd) while signed into your project account. You can also find **Replicagent** under **Agent Platform → Deployments** in project `agentic-oslo-team-12-9afd`. Select the `europe-west4` region if the console asks for a region.
@@ -93,7 +95,16 @@ For an arXiv URL, the demo downloads the e-print at `https://arxiv.org/e-print/<
 
 The claim extractor is told when it reads LaTeX. It is informed that cells are separated by `&`, that `\textbf{122}` is 122, that `\hphantom{1}89` is 89, and that `$^{(-6.35)}$` is a superscript annotation. The evidence check compares LaTeX quotes on their visible content, so a quote written as `64^{(-6.35)}` verifies against a source line containing `64$^{(-6.35)}$`. Numbers must still appear in the same order; the check only ignores `$`, braces, and formatting commands. This tolerance applies to LaTeX evidence only. PDF evidence is still matched on its exact extracted text.
 
-## Use another paper
+## Use the drag-and-drop page
+
+The local API also serves a simple page for auditing a PDF you already have, such as a paper from a publisher that blocks automated downloads.
+
+```bash
+python3.12 -m uvicorn replicagent.app:app --host 127.0.0.1 --port 8001
+```
+
+Open http://127.0.0.1:8001, drop a PDF onto the page, and optionally enter the GitHub or Zenodo URL of the replication package. The page shows each workflow stage while the audit runs, then renders the report. The address ends with the audit ID, so a reload or a shared local link returns to the same report. The page sends the PDF as the request body to `POST /audits/upload`, with an optional `repository_url` query parameter. Uploads are limited to 25 MB and 80 pages.
+
 
 The web prompt accepts an arXiv URL (LaTeX source preferred, PDF fallback), a public PDF URL, and an optional public GitHub or Zenodo repository URL. PDF attachments are supported when ADK provides their bytes as an inline PDF attachment. A local `.tex` file can be submitted through the terminal runner or API after copying it into the project folder. The demo reads the single LaTeX source file without compiling it or resolving includes.
 
@@ -145,6 +156,7 @@ The API exposes these routes.
 
 ```text
 POST /audits
+POST /audits/upload
 GET  /audits/{audit_id}
 GET  /audits/{audit_id}/claims
 GET  /audits/{audit_id}/findings

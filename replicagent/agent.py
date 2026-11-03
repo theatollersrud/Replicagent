@@ -38,7 +38,7 @@ class IngestPaper(BaseAgent):
             "audit_id", "paper_context", "paper_manifest", "verified_manifest", "review",
             "repository_url", "repository_context", "report_id", "report_path",
             "static_score", "dynamic_score", "requested_paper_source",
-            "requested_repository_url", "requested_audit_id",
+            "requested_repository_url", "requested_audit_id", "requested_upload_sha256",
         )}
         try:
             selected = await select_paper(ctx)

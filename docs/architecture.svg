@@ -1,0 +1,134 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 584" width="1440" height="584" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+  <title>Replicagent agent architecture</title>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#5f5e58"/>
+    </marker>
+    <style>
+      .title { font-size: 24px; font-weight: 700; fill: #1d1d1b; }
+      .subtitle { font-size: 14px; fill: #6b6b66; }
+      .label { font-size: 13px; font-weight: 600; fill: #6b6b66; letter-spacing: .04em; }
+      .node-title { font-size: 15px; font-weight: 700; fill: #1d1d1b; }
+      .kind { font-size: 11px; font-weight: 600; letter-spacing: .06em; }
+      .body { font-size: 12px; fill: #3a3a36; }
+      .box-title { font-size: 13px; font-weight: 700; fill: #1d1d1b; }
+      .box-body { font-size: 12px; fill: #4a4a45; }
+      .line { stroke: #5f5e58; stroke-width: 1.6; fill: none; }
+      .code { fill: #eef3fc; stroke: #2f5bd3; stroke-width: 1.5; }
+      .llm { fill: #f3eefc; stroke: #7a4fd0; stroke-width: 1.5; }
+      .external { fill: #f7f7f5; stroke: #b9b8b1; stroke-width: 1.2; stroke-dasharray: 5 4; }
+      .ledger { fill: #fff6e5; stroke: #c98a1b; stroke-width: 1.5; }
+      .entry { fill: #ffffff; stroke: #c9c8c2; stroke-width: 1.2; }
+      .output { fill: #edf7f1; stroke: #1f7a4d; stroke-width: 1.5; }
+    </style>
+  </defs>
+
+  <rect width="1440" height="584" fill="#ffffff"/>
+
+  <!-- Title -->
+  <text x="24" y="44" class="title">Replicagent: how an audit runs</text>
+  <text x="24" y="70" class="subtitle">A fixed Google ADK workflow. Gemini interprets the paper and the evidence; deterministic code observes, verifies, and scores.</text>
+
+  <g transform="translate(0,-86)">
+  <!-- Entry points -->
+  <text x="24" y="212" class="label">ENTRY POINTS</text>
+  <rect x="24" y="226" width="220" height="52" rx="8" class="entry"/>
+  <text x="38" y="248" class="box-title">ADK web UI</text>
+  <text x="38" y="266" class="box-body">adk web · chat with a URL or PDF</text>
+  <rect x="24" y="290" width="220" height="52" rx="8" class="entry"/>
+  <text x="38" y="312" class="box-title">Drag-and-drop page</text>
+  <text x="38" y="330" class="box-body">local FastAPI · REST API</text>
+  <rect x="24" y="354" width="220" height="52" rx="8" class="entry"/>
+  <text x="38" y="376" class="box-title">Terminal runner</text>
+  <text x="38" y="394" class="box-body">python -m scripts.run_audit</text>
+  <rect x="24" y="418" width="220" height="52" rx="8" class="entry"/>
+  <text x="38" y="440" class="box-title">Agent Runtime</text>
+  <text x="38" y="458" class="box-body">Google Cloud deployment</text>
+  <path d="M244,252 H262 M244,316 H262 M244,380 H262 M244,444 H262 M262,252 V444" class="line"/>
+  <path d="M262,358 H298" class="line" marker-end="url(#arrow)"/>
+
+  <!-- Workflow container -->
+  <rect x="280" y="186" width="1136" height="350" rx="14" fill="none" stroke="#d8d7d0" stroke-width="1.5"/>
+  <text x="300" y="212" class="label">ADK WORKFLOW · root_agent</text>
+
+  <!-- Gemini -->
+  <rect x="524" y="222" width="648" height="40" rx="8" class="llm"/>
+  <text x="848" y="247" text-anchor="middle" class="box-body"><tspan font-weight="700" fill="#1d1d1b">Vertex AI · Gemini</tspan>  —  typed structured output (PaperManifest, Review), retried once if invalid</text>
+  <path d="M624,262 V294" class="line" marker-end="url(#arrow)"/>
+  <path d="M1072,262 V294" class="line" marker-end="url(#arrow)"/>
+
+  <!-- Stage 1 -->
+  <rect x="300" y="296" width="200" height="124" rx="10" class="code"/>
+  <text x="314" y="322" class="node-title">1 · IngestPaper</text>
+  <text x="314" y="341" class="kind" fill="#2f5bd3">DETERMINISTIC</text>
+  <text x="314" y="366" class="body">Reads arXiv LaTeX, a PDF</text>
+  <text x="314" y="384" class="body">URL, or an uploaded PDF</text>
+  <text x="314" y="402" class="body">Records each page as evidence</text>
+
+  <!-- Stage 2 -->
+  <rect x="524" y="296" width="200" height="124" rx="10" class="llm"/>
+  <text x="538" y="322" class="node-title">2 · UnderstandPaper</text>
+  <text x="538" y="341" class="kind" fill="#7a4fd0">GEMINI AGENT</text>
+  <text x="538" y="366" class="body">Extracts 4–8 empirical claims</text>
+  <text x="538" y="384" class="body">from tables and figures, each</text>
+  <text x="538" y="402" class="body">with an exact source quote</text>
+
+  <!-- Stage 3 -->
+  <rect x="748" y="296" width="200" height="124" rx="10" class="code"/>
+  <text x="762" y="322" class="node-title">3 · InspectArtifacts</text>
+  <text x="762" y="341" class="kind" fill="#2f5bd3">DETERMINISTIC</text>
+  <text x="762" y="366" class="body">Drops claims whose quote fails</text>
+  <text x="762" y="384" class="body">Finds the replication package</text>
+  <text x="762" y="402" class="body">Inspects files, never runs them</text>
+
+  <!-- Stage 4 -->
+  <rect x="972" y="296" width="200" height="124" rx="10" class="llm"/>
+  <text x="986" y="322" class="node-title">4 · ReviewEvidence</text>
+  <text x="986" y="341" class="kind" fill="#7a4fd0">GEMINI AGENT</text>
+  <text x="986" y="366" class="body">Writes findings, each citing</text>
+  <text x="986" y="384" class="body">an evidence ID and a quote</text>
+  <text x="986" y="402" class="body">Proposes reproduction steps</text>
+
+  <!-- Stage 5 -->
+  <rect x="1196" y="296" width="200" height="124" rx="10" class="code"/>
+  <text x="1210" y="322" class="node-title">5 · VerifyAndScore</text>
+  <text x="1210" y="341" class="kind" fill="#2f5bd3">DETERMINISTIC</text>
+  <text x="1210" y="366" class="body">Rechecks every quote and path</text>
+  <text x="1210" y="384" class="body">Recounts stored results</text>
+  <text x="1210" y="402" class="body">Scores with a fixed rubric</text>
+
+  <!-- Stage arrows -->
+  <path d="M500,358 H522" class="line" marker-end="url(#arrow)"/>
+  <path d="M724,358 H746" class="line" marker-end="url(#arrow)"/>
+  <path d="M948,358 H970" class="line" marker-end="url(#arrow)"/>
+  <path d="M1172,358 H1194" class="line" marker-end="url(#arrow)"/>
+
+  <!-- Public sources -->
+  <rect x="300" y="456" width="648" height="56" rx="8" class="external"/>
+  <text x="624" y="479" text-anchor="middle" class="box-title">Public sources</text>
+  <text x="624" y="498" text-anchor="middle" class="box-body">arXiv LaTeX or PDF · publisher PDF or upload · GitHub at a pinned commit · Zenodo record</text>
+  <path d="M400,456 V422" class="line" marker-end="url(#arrow)"/>
+  <path d="M848,456 V422" class="line" marker-end="url(#arrow)"/>
+
+  <!-- Evidence ledger -->
+  <rect x="972" y="456" width="424" height="56" rx="8" class="ledger"/>
+  <text x="1184" y="479" text-anchor="middle" class="box-title">Evidence ledger · evidence.jsonl</text>
+  <text x="1184" y="498" text-anchor="middle" class="box-body">Append-only, SHA-256 hashed. Stages 1, 3, 5 record; 2 and 4 must cite.</text>
+  <path d="M1296,420 V454" class="line" marker-end="url(#arrow)"/>
+
+  <!-- Report -->
+  <path d="M1184,512 V570" class="line" marker-end="url(#arrow)"/>
+  <rect x="972" y="572" width="424" height="76" rx="10" class="output"/>
+  <text x="986" y="596" class="box-title">Report · audits/&lt;id&gt;/report.json and .md</text>
+  <text x="986" y="616" class="box-body">Static score 0–10 · dynamic score not assessed</text>
+  <text x="986" y="634" class="box-body">Claims · findings · unexecuted plan · limits · rejected items</text>
+
+  <!-- Legend -->
+  <rect x="300" y="580" width="16" height="16" rx="4" class="code"/>
+  <text x="324" y="593" class="box-body">Deterministic code: observes and checks</text>
+  <rect x="580" y="580" width="16" height="16" rx="4" class="llm"/>
+  <text x="604" y="593" class="box-body">Gemini call: interprets, cannot score</text>
+  <text x="300" y="626" class="box-body">Any claim, finding, or plan step whose quote, evidence ID, or file path fails the check is</text>
+  <text x="300" y="644" class="box-body">dropped from the report and listed as rejected. Audited code is never imported or executed.</text>
+  </g>
+</svg>
