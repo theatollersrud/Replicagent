@@ -1,5 +1,15 @@
 # Replicagent
 
+This feature branch adds a bounded cloud notebook test. Open [Replicagent Dynamic (preview)](https://console.cloud.google.com/vertex-ai/agents/agent-engines/locations/europe-west4/agent-engines/8845588637643964416/playground?project=agentic-oslo-team-12-9afd) and submit the usual paper URL. The original static demo remains available through the main-branch link below.
+
+The workflow uploads the inspected archive to a private Cloud Storage bucket and starts the Cloud Run job named replicagent-dynamic. The job has a hard 120-second timeout and zero retries. It checks the archive hash, rejects unsafe archive paths, and executes one selected analysis notebook inside a Cloud Run sandbox. The sandbox has no outbound network, inherited host environment, or credential mount. For the supplied paper, the selected notebook is CreateVennDiagrams.ipynb. Its original code cells run in order with pandas, matplotlib, and venn installed. The notebook source is unmodified. This prototype does not install arbitrary package dependencies.
+
+A completed notebook contributes 4/10 to the provisional dynamic score. The six points for result reproduction remain unresolved. A missing dependency or missing cloud prerequisite is recorded as a blocker and receives an unassessed score. A notebook failure or timeout receives zero execution points for this test environment. The report includes the notebook path, elapsed time, exit status, and bounded program output. It labels the program output as untrusted.
+
+The controller can spend additional time uploading the package and waiting for Cloud Run to start. The 120-second limit applies to the Cloud Run task itself, including preparation. The worker reserves time to write its result before that deadline. The test does not rerun model inference or independently verify generated programs.
+
+The cloud worker is built with Dockerfile.dynamic-worker and cloudbuild.dynamic.yaml. The managed preview agent is deployed with scripts/deploy_runtime.py using --display-name and --dynamic-job-name. The original main deployment remains unchanged.
+
 Replicagent is a Google Agent Development Kit (ADK) demo that reads a research paper, discovers a replication package, inspects its source files, and saves an evidence-grounded static reproducibility report.
 
 ## Use the shared Google Cloud agent
@@ -160,7 +170,7 @@ Submit `{"paper_source":"https://arxiv.org/abs/2510.21513v2"}` for a live audit.
 
 This demo combines real PDF ingestion, limited artifact discovery, static inspection, and two functioning Gemini agents. It uses current ADK `Workflow` graph edges. It can run locally, in Cloud Run, or in Agent Runtime with the shared console Playground. Audit files use the filesystem. Managed Agent Runtime sessions use Google Cloud session storage, and the Cloud Run deployment stores audit files on a mounted Cloud Storage bucket.
 
-The demo does not implement isolated code execution, execution-based result reproduction, full training runs, repository repair, LaTeX compilation, mathematical verification, or comprehensive reference verification. The execution route reports `not_attempted`. Source code from audited packages is never imported or executed by the workflow.
+This feature branch executes one selected analysis notebook inside an isolated cloud job. Full model inference, independent validation of generated programs, full training runs, repository repair, LaTeX compilation, mathematical verification, and comprehensive reference verification remain outside the prototype. The main demo remains available separately.
 
 The implementation supports the supplied paper and a managed cloud deployment. Isolated execution remains a separate feature-branch task.
 

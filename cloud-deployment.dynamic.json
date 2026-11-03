@@ -1,0 +1,9 @@
+{
+  "project": "agentic-oslo-team-12-9afd",
+  "region": "europe-west4",
+  "runtime_name": "projects/674330246692/locations/europe-west4/reasoningEngines/8845588637643964416",
+  "job_name": "replicagent-dynamic",
+  "task_timeout_seconds": 120,
+  "max_retries": 0,
+  "worker_image": "europe-west4-docker.pkg.dev/agentic-oslo-team-12-9afd/replicagent/dynamic-worker:prototype-2"
+}

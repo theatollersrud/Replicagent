@@ -131,6 +131,7 @@ class AuditReport(BaseModel):
     reference_verification_status: Status = Status.NOT_ATTEMPTED
     claim_coverage: dict
     cached_result_comparisons: list[ResultComparison] = Field(default_factory=list)
+    executions: list[dict] = Field(default_factory=list)
     summary: str
     limitations: list[str]
     rejected_evidence_references: list[str]

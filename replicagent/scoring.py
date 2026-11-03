@@ -66,7 +66,7 @@ def calculate_dynamic_score(execution: dict | None = None, policy: dict | None =
         components.append(ScoreComponent(
             criterion=criterion, maximum=maximum,
             awarded=round(maximum * fraction, 2) if assessed else None,
-            status=Status(result["status"]) if assessed else Status(execution.get("status", "not_attempted")),
+            status=Status(result["status"]) if assessed else (Status.BLOCKED if execution.get("status") == "blocked" else Status.NOT_ATTEMPTED),
             rationale=result["rationale"] if assessed else execution.get("reason", "This dynamic criterion has not been tested."),
             evidence_ids=result.get("evidence_ids", []) if assessed else [],
         ))

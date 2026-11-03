@@ -65,6 +65,11 @@ def findings(audit_id: str):
 @app.get("/audits/{audit_id}/executions")
 def executions(audit_id: str):
     load(audit_id, "status.json")
+    try:
+        execution = read(audit_id, "execution.json")
+        return {"status": execution["status"], "executions": [execution]}
+    except FileNotFoundError:
+        pass
     return {"status": "not_attempted", "executions": [], "reason": "Isolated execution is outside this demo."}
 
 

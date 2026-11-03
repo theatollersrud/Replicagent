@@ -1,6 +1,6 @@
 import json
 
-from .schemas import AuditReport, AuditFinding, PaperManifest, Review
+from .schemas import AuditReport, AuditFinding, PaperManifest, Review, Status
 from .comparison import compare_cached_counts
 from .scoring import calculate_static_score, calculate_dynamic_score
 from .storage import EvidenceLedger, read, save, verify_quote
@@ -68,22 +68,29 @@ def finalize(audit_id: str, review_value) -> tuple[AuditReport, str]:
     findings.sort(key=lambda finding: rank[finding.severity])
     # Keep the large index and excerpts in separate stored files.
     repository_summary = {k: v for k, v in repository.items() if k not in {"source_excerpts", "file_paths"}}
+    try:
+        execution = read(audit_id, "execution.json")
+    except FileNotFoundError:
+        execution = None
     report = AuditReport(
-        audit_id=audit_id, state="completed_static_audit", paper=manifest,
+        audit_id=audit_id, state="completed_audit" if execution else "completed_static_audit", paper=manifest,
         repository=repository_summary, findings=findings, reproduction_plan=plan,
-        static_score=calculate_static_score(repository), dynamic_score=calculate_dynamic_score(),
+        static_score=calculate_static_score(repository), dynamic_score=calculate_dynamic_score(execution),
+        dynamic_status=Status(execution["status"]) if execution else Status.NOT_ATTEMPTED,
+        executions=[execution] if execution else [],
         summary=(f"The audit inspected {repository.get('file_count', 0)} artifact files and retained {len(findings)} findings with checked source references. "
                  f"It completed independent comparisons for {len(comparisons)} extracted claims using author-provided cached labels. "
                  "The findings below separate deterministic observations from agent interpretations. Full experimental reproduction remains untested."),
         claim_coverage={"claims_extracted": len(manifest.claims), "claims_numerically_verified": sum(c.matches for c in comparisons), "claims_compared_against_cached_labels": len(comparisons), "fraction_numerically_verified": sum(c.matches for c in comparisons) / len(manifest.claims) if manifest.claims else None, "scope": "Independent checks of stored labels. Original code generation and validation remain untested."},
         cached_result_comparisons=comparisons,
         limitations=[
-            "Repository code was not executed. Independent checks of cached labels, when available, do not establish full experimental reproduction.",
+            "Dynamic testing covers one selected analysis notebook under a fixed environment. Full model inference and result reproduction remain untested." if execution else "Repository code was not executed. Independent checks of cached labels, when available, do not establish full experimental reproduction.",
             "Source quotes and evidence IDs were checked mechanically. The reasoning connecting a quote to an interpretation still requires review.",
             "The scoring rubric checks coarse artifact and documentation indicators. It has not been calibrated against expert assessments.",
-            "Archive source ingestion, mathematical verification, comprehensive reference verification, and automated execution remain unimplemented.",
+            "Mathematical verification and comprehensive reference verification remain unimplemented.",
             "Discovered artifact versions may postdate the audited paper. Their correspondence to the exact paper version requires confirmation.",
-            *repository.get("limitations", []), *comparison_limitations, *review.limitations,
+            *repository.get("limitations", []), *comparison_limitations,
+            *[("The review before execution recorded this limitation: " + item) if execution else item for item in review.limitations],
         ],
         rejected_evidence_references=rejected,
     )
@@ -131,7 +138,15 @@ def render_report(report: AuditReport, evidence: dict) -> str:
     for component in dynamic.components:
         awarded = "Unresolved" if component.awarded is None else f"{component.awarded:g}"
         lines.append(f"| {component.criterion.replace('_', ' ').capitalize()} | {awarded} | {component.maximum:g} | {component.status.value.replace('_', ' ')} |")
-    lines.extend(["", dynamic.rationale, "", "## The static findings require review", ""])
+    lines.extend(["", dynamic.rationale])
+    for execution in report.executions:
+        lines.extend(["", "### The cloud notebook test recorded this output", "",
+            f"The execution status is {execution['status']}. The elapsed time is {execution.get('elapsed_seconds', 'unknown')} seconds. The job's hard time limit is 120 seconds.",
+            f"The selected notebook is {execution.get('notebook', 'unresolved')}.",
+            execution.get("reason", ""), "",
+            "The following log is untrusted program output.", ""])
+        lines.extend("    " + line for line in execution.get("stdout", "").splitlines()[-80:])
+    lines.extend(["", "## The static findings require review", ""])
     if not report.findings:
         lines.append("The review produced no findings with source quotes that passed the mechanical evidence check.")
     for index, finding in enumerate(report.findings, 1):

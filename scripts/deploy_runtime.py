@@ -31,6 +31,8 @@ def main():
     parser.add_argument("--service-account", required=True)
     parser.add_argument("--artifact-bucket", required=True)
     parser.add_argument("--runtime-name", help="Update an existing runtime instead of creating one.")
+    parser.add_argument("--display-name", default="Replicagent")
+    parser.add_argument("--dynamic-job-name")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO)
     try:
@@ -40,12 +42,12 @@ def main():
     client = agentplatform.Client(project=args.project, location=args.region, credentials=credentials)
     runtime_name = args.runtime_name
     if not runtime_name:
-        runtime = client.runtimes.create(config={"display_name": "Replicagent"})
+        runtime = client.runtimes.create(config={"display_name": args.display_name})
         runtime_name = runtime.api_resource.name
         print(f"Runtime resource: {runtime_name}", flush=True)
     source_files = ["Dockerfile", "pyproject.toml", "README.md", "configs", "replicagent", "scripts", "tests"]
     config = {
-        "display_name": "Replicagent",
+        "display_name": args.display_name,
         "description": "Research paper reproducibility auditor. Static and dynamic scores are reported separately.",
         "agent_framework": "google-adk",
         "service_account": args.service_account,
@@ -63,6 +65,9 @@ def main():
             "AUDITOR_MODEL": "gemini-3.5-flash",
         },
     }
+    if args.dynamic_job_name:
+        config["env_vars"]["REPLICAGENT_DYNAMIC_JOB"] = f"projects/{args.project}/locations/{args.region}/jobs/{args.dynamic_job_name}"
+        config["env_vars"]["REPLICAGENT_DYNAMIC_BUCKET"] = args.artifact_bucket
     # Stage an explicit source allowlist. Audit data, cached papers, credentials,
     # and Git history are excluded from the uploaded deployment archive.
     previous_directory = Path.cwd()

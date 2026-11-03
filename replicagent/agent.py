@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 import re
 import uuid
 
@@ -134,6 +135,18 @@ When the paper evidence is LaTeX source, quote source lines verbatim with their 
 VERIFIED PAPER MANIFEST:\n""" + json.dumps(ctx.state["verified_manifest"], ensure_ascii=False) + "\n\nPAPER SOURCE EVIDENCE:\n" + ctx.state["paper_context"] + "\n\nREPOSITORY OBSERVATIONS:\n" + ctx.state["repository_context"]
 
 
+class DynamicTest(BaseAgent):
+    async def _run_async_impl(self, ctx):
+        if not os.getenv("REPLICAGENT_DYNAMIC_JOB"):
+            return
+        from .dynamic import run_dynamic
+        audit_id = ctx.session.state["audit_id"]
+        set_stage(audit_id, "Running a two-minute notebook test in Google Cloud")
+        yield progress(self.name, "I am sending the inspected package to an isolated Google Cloud job. The job has a hard two-minute time limit. I will try its analysis notebook and record the output.")
+        result = await asyncio.to_thread(run_dynamic, audit_id)
+        yield progress(self.name, f"The cloud test finished with status {result['status']}. {result['reason']}", {"dynamic_execution": result})
+
+
 class GenerateReport(BaseAgent):
     async def _run_async_impl(self, ctx):
         audit_id = ctx.session.state["audit_id"]
@@ -157,9 +170,10 @@ review = AuditLlmAgent(
     generate_content_config=types.GenerateContentConfig(temperature=0.1),
 )
 report = GenerateReport(name="VerifyAndScore", description="Evidence references are checked, the score is calculated, and reports are saved.")
+dynamic = DynamicTest(name="DynamicTest", description="A selected original analysis notebook runs in a cloud sandbox for at most two minutes.")
 
 root_agent = Workflow(
     name="Replicagent",
     description="The workflow audits paper artifacts and produces an evidence-grounded static reproducibility report.",
-    edges=[("START", ingest), (ingest, understand), (understand, inspect), (inspect, review), (review, report)],
+    edges=[("START", ingest), (ingest, understand), (understand, inspect), (inspect, review), (review, dynamic), (dynamic, report)],
 )
